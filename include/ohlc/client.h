@@ -28,8 +28,10 @@ typedef struct {
     uint32_t capabilities;
 } ohlc_connection_info;
 
-/* A connection is single-owner and permits one outstanding request. TLS always
- * verifies the peer certificate and host. NULL ca_file uses system trust.
+/* A connection is single-owner and permits one outstanding request. Plain TCP
+ * does not encrypt traffic. An empty token selects anonymous access when the
+ * server has no credentials configured; otherwise provide a configured token.
+ * TLS verifies the peer certificate and host. NULL ca_file uses system trust.
  * A socket_path selects a local Unix socket instead of host/port. Options and
  * token bytes are borrowed only during connect. No automatic retries occur. */
 void ohlc_connection_options_init(ohlc_connection_options* options);

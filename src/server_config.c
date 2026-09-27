@@ -76,7 +76,7 @@ static void usage(void) {
          "  --data-volume-mib N             Data volume target (default 1048576)\n"
          "  --max-tables N                  Table bound (default 1024)\n"
          "  --max-cursors N                 Concurrent cursor bound (default 256)\n"
-         "Default: 127.0.0.1:8765. Remote listeners require TLS and credentials.\n"
+         "Default: 127.0.0.1:8765. Credentials and TLS are independently optional.\n"
          "Relative paths use the working directory. Configuration changes require restart.\n"
          "SIGINT/SIGTERM drains workers and checkpoints before exit.");
 }

@@ -431,7 +431,6 @@ int main(int argc, char** argv) {
     }
     struct sockaddr_storage address = {0};
     socklen_t address_size;
-    bool local = true;
     if (socket_path != NULL) {
         struct sockaddr_un* unix_address = (struct sockaddr_un*)&address;
         if (strlen(socket_path) >= sizeof(unix_address->sun_path)) {
@@ -448,20 +447,14 @@ int main(int argc, char** argv) {
             ipv4->sin_family = AF_INET;
             ipv4->sin_port = htons((uint16_t)port);
             address_size = sizeof(*ipv4);
-            local = (ntohl(ipv4->sin_addr.s_addr) >> 24) == 127;
         } else if (inet_pton(AF_INET6, host, &ipv6->sin6_addr) == 1) {
             ipv6->sin6_family = AF_INET6;
             ipv6->sin6_port = htons((uint16_t)port);
             address_size = sizeof(*ipv6);
-            local = IN6_IS_ADDR_LOOPBACK(&ipv6->sin6_addr);
         } else {
             fprintf(stderr, "--host requires a numeric bind address\n");
             return 2;
         }
-    }
-    if (!local && (certificate == NULL || (read_token == NULL && write_token == NULL))) {
-        fprintf(stderr, "Remote listeners require TLS and configured credentials\n");
-        return 2;
     }
     if (certificate != NULL) {
         instance.tls = SSL_CTX_new(TLS_server_method());

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Verify TLS identity and non-retryable mutation/partial-stream boundaries."""
+"""Verify TCP authentication, TLS identity and uncertain-operation boundaries."""
 
 import os
 from pathlib import Path
@@ -164,6 +164,78 @@ def terminal_check(shell, socket_path, token, root):
         os.close(master)
 
 
+def plain_tcp(server, library, shell, root, token, authenticated):
+    # Set an assigned non-loopback IPv4 address to exercise remote client policy.
+    host = os.environ.get("OHLC_TEST_TCP_HOST", "127.0.0.1")
+    with socket.socket() as reserve:
+        reserve.bind((host, 0))
+        port = reserve.getsockname()[1]
+    read_token = root / "read-token"
+    read_token.write_bytes(b"test-reader\n")
+    read_token.chmod(0o600)
+    mode = "token" if authenticated else "anonymous"
+    arguments = [server, "--data", str(root / f"plain-{mode}-db"), "--host", "0.0.0.0",
+                 "--port", str(port)]
+    if authenticated:
+        arguments.extend(["--write-token-file", str(token), "--read-token-file", str(read_token)])
+    process = subprocess.Popen(arguments, stderr=subprocess.PIPE)
+    credential = b"test-writer" if authenticated else b""
+    options = dict(host=host, port=port, tls=False, token=credential, library=library)
+    try:
+        with connect_when_ready(process, **options) as client:
+            table = client.create("plain", period="1d")
+            client.register("TCP")
+            table.insert("TCP", "20260901", (1, 2, 3, 4, 5, 6, 7))
+            with table.cross("20260901") as query:
+                rows = [row for chunk in query for row in chunk.rows()]
+            assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+        if authenticated:
+            for rejected in (b"", b"wrong"):
+                require_error(8, lambda: Connection(**dict(options, token=rejected)))
+            with Connection(**dict(options, token=b"test-reader")) as client:
+                table = client.table("plain")
+                require_error(8, lambda: table.insert("TCP", "20260901", (0,) * 7))
+                with table.cross("20260901") as query:
+                    rows = [row for chunk in query for row in chunk.rows()]
+                assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+        command = [shell, "--host", host, "--port", str(port)]
+        if authenticated:
+            command.extend(["--token-file", str(token)])
+        command.extend(["--execute", 'cross plain "20260901";'])
+        subprocess.run(command, check=True, capture_output=True, timeout=10)
+        if len(sys.argv) > 3:
+            java = sys.argv[4] if len(sys.argv) > 4 else "java"
+            subprocess.run([java, "-ea", "-cp", sys.argv[3], "JavaTransportTest", "plain",
+                            str(port), host, mode], check=True, timeout=15)
+    finally:
+        process.send_signal(signal.SIGTERM)
+        _, error = process.communicate(timeout=20)
+        assert process.returncode == 0, error.decode()
+
+
+def anonymous_tls(server, library, root, certificate, private_key):
+    with socket.socket() as reserve:
+        reserve.bind(("127.0.0.1", 0))
+        port = reserve.getsockname()[1]
+    arguments = [server, "--data", str(root / "tls-anonymous-db"), "--host", "0.0.0.0",
+                 "--port", str(port), "--tls-cert", str(certificate),
+                 "--tls-key", str(private_key)]
+    process = subprocess.Popen(arguments, stderr=subprocess.PIPE)
+    try:
+        with connect_when_ready(process, host="localhost", port=port, tls=True,
+                                ca_file=certificate, library=library) as client:
+            table = client.create("anonymous", period="1d")
+            client.register("TLS")
+            table.insert("TLS", "20260901", (1, 2, 3, 4, 5, 6, 7))
+            with table.cross("20260901") as query:
+                rows = [row for chunk in query for row in chunk.rows()]
+            assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+    finally:
+        process.send_signal(signal.SIGTERM)
+        _, error = process.communicate(timeout=20)
+        assert process.returncode == 0, error.decode()
+
+
 def main():
     server = os.path.abspath(sys.argv[1])
     library = os.path.abspath(sys.argv[2])
@@ -183,6 +255,9 @@ def main():
         token = root / "token"
         token.write_bytes(b"test-writer\n")
         token.chmod(0o600)
+        plain_tcp(server, library, shell, root, token, authenticated=False)
+        plain_tcp(server, library, shell, root, token, authenticated=True)
+        anonymous_tls(server, library, root, certificate, private_key)
         with socket.socket() as reserve:
             reserve.bind(("127.0.0.1", 0))
             port = reserve.getsockname()[1]
@@ -228,7 +303,7 @@ def main():
             process.send_signal(signal.SIGTERM)
             _, error = process.communicate(timeout=20)
             assert process.returncode == 0, error.decode()
-    print("TLS trust/identity, partial results, unknown outcomes and real terminal: OK")
+    print("TCP authentication, TLS identity, partial results, unknown outcomes and terminal: OK")
 
 
 if __name__ == "__main__":

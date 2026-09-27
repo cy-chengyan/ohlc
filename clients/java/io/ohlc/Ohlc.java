@@ -99,8 +99,9 @@ public final class Ohlc implements AutoCloseable {
         this.timeoutMs = timeoutMs;
     }
 
-    /** A null TLS context is allowed only for a loopback peer. TLS performs
-     * certificate-chain and endpoint-identity verification using the context.
+    /** A null TLS context selects unencrypted TCP. An empty token selects
+     * anonymous access when the server has no credentials configured.
+     * TLS verifies the certificate chain and endpoint identity.
      */
     public static Ohlc connect(String host, int port, SSLContext tls, byte[] token, int timeoutMs)
             throws IOException {
@@ -110,9 +111,6 @@ public final class Ohlc implements AutoCloseable {
         Socket socket = new Socket();
         try {
             InetAddress address = InetAddress.getByName(host);
-            if (tls == null && !address.isLoopbackAddress()) {
-                throw new Failure(8, "Remote connections require TLS");
-            }
             socket.connect(new InetSocketAddress(address, port), timeoutMs);
             socket.setTcpNoDelay(true);
             socket.setSoTimeout(timeoutMs);

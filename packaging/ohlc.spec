@@ -6,7 +6,7 @@
 
 Name:           ohlc
 Version:        0.1.0~beta.1
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Fixed-row OHLC storage engine and service
 License:        Apache-2.0
 URL:            https://github.com/cy-chengyan/ohlc
@@ -45,7 +45,7 @@ Native storage engine for direct file access, with no server dependency.
 Summary:        OHLC network client runtime
 Requires:       %{name}-libs%{?_isa} = %{version}-%{release}
 %description client-libs
-Native client library for Unix sockets and authenticated TLS connections.
+Native client library for Unix sockets and TCP with optional credentials and TLS.
 
 %package server
 Summary:        OHLC daemon and offline administration tools

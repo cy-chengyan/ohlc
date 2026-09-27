@@ -39,7 +39,7 @@ def main():
         check("--memory-mib", "64", "--config", str(config))
         check("--config", str(config), "--memory-mib", "64")
         check("--config", str(root / "missing"), status=2)
-        check("--data", str(database), "--host", "0.0.0.0", status=2)
+        check("--data", str(database), "--host", "0.0.0.0")
         check("--data", str(database), "--host", "not-an-address", status=2)
         check("--data", str(database), "--tls-cert", "missing", status=2)
         invalid = [b"unknown = 1", b"port = -1", b"port = 65536", b"port = 9tail",
@@ -61,6 +61,13 @@ def main():
         check("--config", str(config), status=2)
         token.chmod(0o600)
         check("--config", str(config))
+        for host in ("0.0.0.0", "::"):
+            remote = ["--data", str(database), "--host", host]
+            check(*remote)
+            check(*remote, "--write-token-file", str(token))
+            config.write_text(f"data = {database}\nhost = {host}\nread-token-file = {token}\n")
+            check("--config", str(config))
+        config.write_text(base + f"write-token-file = {token}\n")
         arguments = [server, "--max-tables", "2", "--config", str(config)]
         process = subprocess.Popen(arguments, stderr=subprocess.PIPE)
         try:

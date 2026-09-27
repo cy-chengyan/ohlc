@@ -219,9 +219,12 @@ Command-line options override the file; configuration changes require a restart.
 block cache, network buffers, connection count, and query timeouts have separate controls.
 The engine memory budget is not a cap on total process RSS or operating-system page cache.
 
-Unix sockets are private to their owner by default. Non-loopback TCP listeners require TLS and
-configured read or read/write credentials. Credentials are read from private files; clients verify
-the server certificate and identity. Local unauthenticated connections have read/write access.
+Unix sockets are private to their owner by default. TCP supports optional credentials and optional
+TLS independently, on both loopback and remote addresses. Omit both credential files for anonymous
+read/write access, or configure read or read/write credentials to require authentication.
+Omit both `tls-cert` and `tls-key` for plain TCP, or configure both to enable TLS.
+Plain TCP transmits data and any credentials without encryption. Credential files must be private.
+TLS clients verify the server certificate and identity; they do not fall back to plain TCP.
 
 `ohlc-admin` provides offline `check`, `backup`, and `restore`. Stop the process owning the database
 before using these commands. Full configuration, permission, durability, and backup procedures are

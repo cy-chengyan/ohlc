@@ -61,18 +61,6 @@ static ohlc_status connect_address(ohlc_transport* transport, const struct socka
     return status;
 }
 
-static bool loopback(const struct sockaddr* address) {
-    if (address->sa_family == AF_INET) {
-        const struct sockaddr_in* ip = (const struct sockaddr_in*)address;
-        return (ntohl(ip->sin_addr.s_addr) >> 24) == 127;
-    }
-    if (address->sa_family == AF_INET6) {
-        const struct sockaddr_in6* ip = (const struct sockaddr_in6*)address;
-        return IN6_IS_ADDR_LOOPBACK(&ip->sin6_addr);
-    }
-    return false;
-}
-
 static ohlc_status connect_transport(ohlc_client* client, const ohlc_connection_options* options) {
     uint64_t deadline = ohlc_monotonic_ms() + options->timeout_ms;
     if (options->socket_path != NULL) {
@@ -95,10 +83,6 @@ static ohlc_status connect_transport(ohlc_client* client, const ohlc_connection_
     }
     ohlc_status status = OHLC_IO;
     for (const struct addrinfo* item = addresses; item != NULL; item = item->ai_next) {
-        if (!options->tls && !loopback(item->ai_addr)) {
-            status = OHLC_UNAUTHORIZED;
-            continue;
-        }
         status = connect_address(&client->transport, item->ai_addr, item->ai_addrlen, deadline);
         if (status == OHLC_OK) {
             break;
