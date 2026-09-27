@@ -13,14 +13,16 @@ and an interactive command shell.
 
 **Current version: `0.1.0-beta.1` · Deployment target: Linux · License: Apache-2.0**
 
-[Quick start](#quick-start) · [Client libraries](#client-libraries) ·
+[Why integer values](#why-integer-values) · [Quick start](#quick-start) ·
+[Client libraries](#client-libraries) ·
 [RHEL packages](#rhel-packages) · [Benchmarks](#benchmarks) ·
 [Design](docs/design.md) · [Test report](docs/test-report.md)
 
 ## What it provides
 
 - User-created tables for periods such as `1m`, `3m`, `1d`, and `5d`, all with the same schema.
-- Integer-only values, exact ticker identifiers, and date or date-time input.
+- **Integer-only market values in both APIs and storage**, exact ticker identifiers, and date or
+  date-time input.
 - Atomic batches within one table, WAL synchronization before successful write acknowledgment,
   and snapshot-consistent queries.
 - Real-time writes, batch import, and complete-row replacement for an existing key.
@@ -57,6 +59,35 @@ Range queries use **`[start, end)`** and return records in actual time order, in
 backfill. Minute tables require a time zone and whole-minute timestamps; an explicit UTC offset
 overrides the table's zone. Daily tables use calendar-date labels. A period such as `3m` or `5d`
 describes caller-supplied bars: ohlc does not round timestamps, fill gaps, or calculate aggregates.
+
+## Why integer values
+
+**The caller owns precision, units, scaling, rounding, and conversion. ohlc stores and returns the
+supplied integers exactly, within each field's declared range.** This boundary applies to all seven
+market-data fields in the APIs, shell, imports, and storage. Date and date-time inputs follow the
+separate time contract described above.
+
+Keeping integers throughout the interface and storage is a deliberate design choice:
+
+- **Avoid introducing floating-point approximation.** Decimal values such as `123.45` cannot be
+  represented exactly in binary floating point. Accepting floats at the API and converting them to
+  integers inside the database would already cross that precision boundary.
+- **Keep business interpretation with the application.** Markets and data sources use different
+  price precision, volume units, amount units, and adjustment-factor scales. ohlc does not choose
+  a scale, infer decimal places, or silently round or rescale these values.
+- **Preserve the same integer across clients and storage.** Callers can compare the returned integer
+  directly with the submitted value without a floating-point tolerance. This is a correctness
+  contract, not a claim that integer storage is inherently faster than floating-point storage.
+
+For example, an application that chooses two decimal places converts the price `123.45` to the
+integer `12345` before writing. ohlc receives, stores, and returns `12345`; the application renders
+it as `123.45` after reading. The factor of `100` is an application convention, not a database
+default or an automatically recorded scale.
+
+Callers must keep that convention consistent between writers and readers, choose their conversion
+and rounding rules, and ensure the result fits the field's integer range. ohlc cannot recover
+precision lost before submission. The authoritative contract is in the
+[data contract](docs/design.md#31-七字段定长行).
 
 ## Quick start
 
