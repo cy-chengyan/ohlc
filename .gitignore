@@ -1,0 +1,124 @@
+# CMake and native build directories
+build/
+/build-*/
+cmake-build-*/
+/out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+DartConfiguration.tcl
+Testing/
+CMakeUserPresets.json
+compile_commands.json
+build.ninja
+rules.ninja
+.ninja_deps
+.ninja_log
+
+# Native compiler and linker output
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dSYM/
+
+# Release artifacts belong in release downloads, not source history.
+*.rpm
+*.srpm
+*.whl
+/ohlc-*.tar.gz
+/ohlc-*.tar.xz
+/ohlc-*.tgz
+/ohlc-*.zip
+
+# Coverage and profiling output
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.profdata
+gmon.out
+perf.data
+perf.data.*
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Python environments, caches, and package output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Java build output and local caches; keep Maven and Gradle wrappers tracked
+target/
+.gradle/
+*.class
+*.jar
+*.war
+!**/.mvn/wrapper/maven-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.jar
+hs_err_pid*.log
+replay_pid*.log
+
+# Local runtime data and generated results at the repository root
+# Keep data file extensions available for versioned test fixtures.
+/database/
+/data/
+/logs/
+/run/
+/tmp/
+/benchmark-results/
+/core
+/core.[0-9]*
+/nohup.out
+
+# Private deployment material; tests generate disposable credentials at runtime.
+.test-server
+.test-server.*
+secrets/
+*.local.conf
+*.local.cnf
+*.key
+*.pem
+*.p12
+*.pfx
+*.token
+id_rsa
+id_ecdsa
+id_ed25519
+
+# Local environment values; keep reusable templates tracked
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Editor state; keep shareable VS Code configuration tracked
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
+
+# Operating system metadata
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini

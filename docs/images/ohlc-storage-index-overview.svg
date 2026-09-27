@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1740" viewBox="0 0 1920 1740">
+  <rect width="100%" height="100%" fill="#F4F7FB" />
+  <text x="64.00" y="65.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">OHLC  /  基准第一版  /  01</text>
+  <text x="64.00" y="141.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="49" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">存储与索引：从键找到一条行情</text>
+  <text x="64.00" y="193.30" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">二维分块  ·  计算寻址  ·  定长行存  ·  不压缩</text>
+  <rect x="1360" y="53" width="18" height="18" rx="5" fill="#2563C8" stroke="none" stroke-width="1.5" />
+  <text x="1389.00" y="67.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">内存索引</text>
+  <rect x="1520" y="53" width="18" height="18" rx="5" fill="#008A82" stroke="none" stroke-width="1.5" />
+  <text x="1549.00" y="67.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">磁盘数据</text>
+  <rect x="1680" y="53" width="18" height="18" rx="5" fill="#B86400" stroke="none" stroke-width="1.5" />
+  <text x="1709.00" y="67.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">选中路径</text>
+  <rect x="64" y="238" width="1792" height="490" rx="16" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
+  <rect x="96" y="263" width="42" height="42" rx="21" fill="#2563C8" stroke="none" stroke-width="1.5" />
+  <text x="108.25" y="294.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="29" font-weight="600" dominant-baseline="alphabetic" fill="#FFFFFF">1</text>
+  <text x="154.00" y="293.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">常驻内存：在指定表中按证券与真实时间定位</text>
+  <rect x="96" y="337" width="280" height="121" rx="16" fill="#F4F7FB" stroke="#D8E2ED" stroke-width="1.5" />
+  <rect x="96" y="504" width="280" height="121" rx="16" fill="#F4F7FB" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="118.00" y="378.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">证券标识</text>
+  <text x="118.00" y="423.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">ticker = "AAPL"</text>
+  <text x="118.00" y="545.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">真实时间</text>
+  <text x="118.00" y="583.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">20260901 09:36:00</text>
+  <rect x="440" y="337" width="328" height="121" rx="16" fill="#EAF2FF" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="462.00" y="379.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">证券字典</text>
+  <text x="462.00" y="424.30" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">AAPL → code 37</text>
+  <rect x="440" y="504" width="328" height="121" rx="16" fill="#EAF2FF" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="462.00" y="546.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">时间映射 + band 目录</text>
+  <text x="462.00" y="581.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">time_code 1003 → band 7</text>
+  <polyline points="385,397 430,397" fill="none" stroke="#2563C8" stroke-width="3" stroke-linejoin="round" />
+  <polygon points="430.00,397.00 417.00,391.00 417.00,403.00" fill="#2563C8" />
+  <polyline points="385,565 430,565" fill="none" stroke="#2563C8" stroke-width="3" stroke-linejoin="round" />
+  <polygon points="430.00,565.00 417.00,559.00 417.00,571.00" fill="#2563C8" />
+  <rect x="886" y="355" width="456" height="264" rx="16" fill="#EAF2FF" stroke="#8EB7ED" stroke-width="2" />
+  <text x="911.00" y="399.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">证券组目录项 · 16 B</text>
+  <text x="911.00" y="449.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="30" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">band 7  /  group 2</text>
+  <text x="911.00" y="487.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">group = 37 / 16 = 2</text>
+  <polyline points="911,506 1317,506" fill="none" stroke="#D8E2ED" stroke-width="2" stroke-linejoin="round" />
+  <text x="911.00" y="541.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">base_offset  8 B</text>
+  <text x="1139.00" y="541.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">tile_mask  2 B</text>
+  <text x="911.00" y="585.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">flags            2 B</text>
+  <text x="1139.00" y="585.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">volume_id  4 B</text>
+  <polyline points="778,397 828,397 828,422 876,422" fill="none" stroke="#2563C8" stroke-width="3" stroke-linejoin="round" />
+  <polygon points="876.00,422.00 863.00,416.00 863.00,428.00" fill="#2563C8" />
+  <polyline points="778,565 828,565 828,550 876,550" fill="none" stroke="#2563C8" stroke-width="3" stroke-linejoin="round" />
+  <polygon points="876.00,550.00 863.00,544.00 863.00,556.00" fill="#2563C8" />
+  <rect x="1440" y="355" width="368" height="264" rx="16" fill="#EAF2FF" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1463.00" y="400.40" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">完整块元数据 · 32 B</text>
+  <text x="1463.00" y="443.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">其中存在位 128 bit = 16 B</text>
+  <rect x="1463" y="478" width="30" height="36" rx="5" fill="#2563C8" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1471.50" y="502.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#FFFFFF">1</text>
+  <rect x="1502" y="478" width="30" height="36" rx="5" fill="#2563C8" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1510.50" y="502.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#FFFFFF">1</text>
+  <rect x="1541" y="478" width="30" height="36" rx="5" fill="#FFFFFF" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1549.50" y="502.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0</text>
+  <rect x="1580" y="478" width="30" height="36" rx="5" fill="#2563C8" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1588.50" y="502.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#FFFFFF">1</text>
+  <rect x="1619" y="478" width="30" height="36" rx="5" fill="#FFFFFF" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1627.50" y="502.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0</text>
+  <rect x="1658" y="478" width="30" height="36" rx="5" fill="#2563C8" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1666.50" y="502.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#FFFFFF">1</text>
+  <rect x="1697" y="478" width="30" height="36" rx="5" fill="#2563C8" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1705.50" y="502.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#FFFFFF">1</text>
+  <rect x="1736" y="478" width="30" height="36" rx="5" fill="#FFFFFF" stroke="#A8C6F1" stroke-width="1.5" />
+  <text x="1744.50" y="502.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0</text>
+  <text x="1463.00" y="554.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">1 = 有记录    0 = 缺失</text>
+  <text x="1463.00" y="593.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">另含代次 / CRC / 保留位，共 16 B</text>
+  <text x="99.00" y="688.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">表目录、证券字典、双向时间映射、band / 组目录、完整块元数据均常驻内存。</text>
+  <rect x="64" y="790" width="1792" height="421" rx="16" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
+  <rect x="96" y="813" width="42" height="42" rx="21" fill="#008A82" stroke="none" stroke-width="1.5" />
+  <text x="108.25" y="844.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="29" font-weight="600" dominant-baseline="alphabetic" fill="#FFFFFF">2</text>
+  <text x="154.00" y="843.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">少量大文件：块在文件内连续存放</text>
+  <polyline points="1114,619 1114,820 790,820 790,921" fill="none" stroke="#B86400" stroke-width="3.5" stroke-linejoin="round" />
+  <polygon points="790.00,921.00 796.00,908.00 784.00,908.00" fill="#B86400" />
+  <text x="1133.00" y="766.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">定位连续区 extent</text>
+  <polyline points="1624,619 1624,917" fill="none" stroke="#60718A" stroke-width="2" stroke-linejoin="round" stroke-dasharray="9 7" />
+  <polygon points="1624.00,917.00 1630.00,904.00 1618.00,904.00" fill="#60718A" />
+  <text x="1645.00" y="772.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">持久化副本</text>
+  <text x="114.00" y="901.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="600" dominant-baseline="alphabetic" fill="#008A82">tables/&lt;id&gt;/data-*.dat  ·  定长行情槽位</text>
+  <rect x="96" y="916" width="1248" height="190" rx="12" fill="#E3F5F1" stroke="#9BD8D1" stroke-width="1.5" />
+  <rect x="115" y="936" width="111" height="151" rx="8" fill="#FFFFFF" stroke="#B7D8D3" stroke-width="1.5" />
+  <text x="135.50" y="995.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">文件头</text>
+  <text x="143.75" y="1034.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">4 KiB</text>
+  <rect x="243" y="936" width="166" height="151" rx="8" fill="#FFFFFF" stroke="#B7D8D3" stroke-width="1.5" />
+  <text x="302.00" y="997.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">其它</text>
+  <text x="290.25" y="1035.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">extent</text>
+  <rect x="436" y="936" width="220" height="151" rx="0" fill="#FFFFFF" stroke="#6ABAB0" stroke-width="2" />
+  <text x="516.00" y="989.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="29" font-weight="600" dominant-baseline="alphabetic" fill="#008A82">j = 0</text>
+  <text x="512.75" y="1037.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">4 KiB</text>
+  <rect x="656" y="936" width="220" height="151" rx="0" fill="#FFFFFF" stroke="#6ABAB0" stroke-width="2" />
+  <text x="736.00" y="989.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="29" font-weight="600" dominant-baseline="alphabetic" fill="#008A82">j = 4</text>
+  <text x="732.75" y="1037.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">4 KiB</text>
+  <rect x="876" y="936" width="220" height="151" rx="0" fill="#FFF0D1" stroke="#B86400" stroke-width="2" />
+  <text x="947.25" y="989.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="29" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">j = 13</text>
+  <text x="952.75" y="1037.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">4 KiB</text>
+  <rect x="1123" y="936" width="201" height="151" rx="8" fill="#FFFFFF" stroke="#B7D8D3" stroke-width="1.5" />
+  <text x="1160.50" y="996.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">其它 extent</text>
+  <text x="439.00" y="1142.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">band 7 / group 2：仅 j = 0、4、13 非空，紧密排列共 12 KiB。</text>
+  <rect x="1390" y="921" width="418" height="119" rx="16" fill="#F4F7FB" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="1412.00" y="963.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#008A82">data-*.meta</text>
+  <text x="1412.00" y="999.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">16 + 8 + 4 + 4 = 32 B / 块</text>
+  <text x="1412.00" y="1030.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="18" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">存在位 / 代次 / CRC / 保留</text>
+  <rect x="1390" y="1060" width="418" height="113" rx="16" fill="#F4F7FB" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="1412.00" y="1104.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#008A82">index-*.dat / catalog-*.dat</text>
+  <text x="1412.00" y="1148.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">表索引 / 全库字典与表目录</text>
+  <text x="66.00" y="1690" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0.1.0-beta.1 · 磁盘格式 4 · 网络协议 3  |  表与卷参与隔离；补录不改变已有 time_code。</text>
+  <rect x="64" y="1246" width="1792" height="376" rx="14" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="100" y="1300" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" fill="#15263E">3   写入与恢复：WAL 保护热块，检查点发布持久入口</text>
+  <rect x="100" y="1330" width="384" height="136" rx="14" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="120" y="1368" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="600" fill="#2563C8">WAL 同步</text>
+  <text x="120" y="1408" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" fill="#15263E">完整事务追加并同步</text>
+  <text x="120" y="1445" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" fill="#60718A">成功确认后可重放</text>
+  <rect x="530" y="1330" width="384" height="136" rx="14" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="550" y="1368" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="600" fill="#2563C8">不可变内存根</text>
+  <text x="550" y="1408" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" fill="#15263E">热块 / 路径复制 / 快照</text>
+  <text x="550" y="1445" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" fill="#60718A">查询可见已提交记录</text>
+  <rect x="960" y="1330" width="384" height="136" rx="14" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="980" y="1368" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="600" fill="#008A82">检查点文件同步</text>
+  <text x="980" y="1408" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" fill="#15263E">数据 + 元数据 + 索引</text>
+  <text x="980" y="1445" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" fill="#60718A">全库 catalog 与目录同步</text>
+  <rect x="1390" y="1330" width="384" height="136" rx="14" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="1410" y="1368" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="600" fill="#008A82">双 CURRENT 入口</text>
+  <text x="1410" y="1408" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" fill="#15263E">轮流发布 CURRENT.0 / .1</text>
+  <text x="1410" y="1445" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" fill="#60718A">持久快照 + WAL 恢复边界</text>
+  <path d="M490,1400 L521,1400 M509,1394 L521,1400 L509,1406" fill="none" stroke="#008A82" stroke-width="3" />
+  <path d="M920,1400 L951,1400 M939,1394 L951,1400 L939,1406" fill="none" stroke="#008A82" stroke-width="3" />
+  <path d="M1350,1400 L1381,1400 M1369,1394 L1381,1400 L1369,1406" fill="none" stroke="#008A82" stroke-width="3" />
+  <text x="100" y="1514" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="400" fill="#15263E">恢复：校验有效 CURRENT → 载入表目录与常驻索引 → 从记录的边界连续重放 WAL。</text>
+  <text x="100" y="1562" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" fill="#60718A">WAL 只删除两个有效入口均不再需要的完整旧段；数据、元数据、索引与 catalog 追加保留。</text>
+</svg>

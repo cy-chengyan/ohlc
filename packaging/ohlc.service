@@ -1,0 +1,41 @@
+[Unit]
+Description=OHLC storage server
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=ohlc
+Group=ohlc
+WorkingDirectory=/var/lib/ohlc
+StateDirectory=ohlc
+StateDirectoryMode=0700
+RuntimeDirectory=ohlc
+RuntimeDirectoryMode=0700
+ExecStartPre=/usr/bin/ohlcd --config /etc/ohlc/ohlcd.conf --check-config
+ExecStart=/usr/bin/ohlcd --config /etc/ohlc/ohlcd.conf
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+TimeoutStopSec=300
+UMask=0077
+LimitNOFILE=65536
+TasksMax=2048
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

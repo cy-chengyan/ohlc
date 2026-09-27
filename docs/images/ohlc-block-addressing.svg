@@ -1,0 +1,223 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1470" viewBox="0 0 1920 1470">
+  <rect width="100%" height="100%" fill="#F4F7FB" />
+  <text x="64.00" y="65.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">OHLC  /  基准第一版  /  02</text>
+  <text x="64.00" y="141.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="49" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">放大一个块：记录的位置由坐标算出</text>
+  <text x="64.00" y="192.40" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">样例：table_id = 1；AAPL → ticker_code 37；真实时间已映射为 time_code = 1003。</text>
+  <rect x="64" y="238" width="1030" height="770" rx="16" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
+  <rect x="96" y="264" width="42" height="42" rx="21" fill="#2563C8" stroke="none" stroke-width="1.5" />
+  <text x="108.25" y="295.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="29" font-weight="600" dominant-baseline="alphabetic" fill="#FFFFFF">3</text>
+  <text x="154.00" y="294.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">16 股 × 8 个内部时间编号 = 128 格 = 4 KiB</text>
+  <text x="269.00" y="342.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">块内编号 col</text>
+  <text x="130.00" y="365.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">证券 row</text>
+  <text x="306.25" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0</text>
+  <text x="395.25" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">1</text>
+  <text x="484.25" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">2</text>
+  <text x="573.75" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="600" dominant-baseline="alphabetic" fill="#008A82">3</text>
+  <text x="662.25" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">4</text>
+  <text x="751.25" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">5</text>
+  <text x="840.25" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">6</text>
+  <text x="929.25" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">7</text>
+  <text x="214.00" y="398.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0</text>
+  <rect x="269" y="375" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="375" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="375" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="375" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="375" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="375" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="375" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="375" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="214.00" y="430.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">1</text>
+  <rect x="269" y="407" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="407" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="407" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="407" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="407" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="407" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="407" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="407" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="214.00" y="462.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">2</text>
+  <rect x="269" y="439" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="439" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="439" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="439" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="439" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="439" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="439" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="439" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="214.00" y="494.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">3</text>
+  <rect x="269" y="471" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="471" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="471" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="471" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="471" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="471" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="471" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="471" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="214.00" y="526.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">4</text>
+  <rect x="269" y="503" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="503" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="503" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="503" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="503" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="503" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="503" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="503" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="133.50" y="558.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">5 · AAPL</text>
+  <rect x="269" y="535" width="89" height="32" rx="0" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="535" width="89" height="32" rx="0" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="535" width="89" height="32" rx="0" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="535" width="89" height="32" rx="0" fill="#FFF0D1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="535" width="89" height="32" rx="0" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="535" width="89" height="32" rx="0" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="535" width="89" height="32" rx="0" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="535" width="89" height="32" rx="0" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="214.00" y="590.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">6</text>
+  <rect x="269" y="567" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="567" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="567" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="567" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="567" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="567" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="567" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="567" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="214.00" y="622.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">7</text>
+  <rect x="269" y="599" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="599" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="599" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="599" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="599" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="599" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="599" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="599" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="214.00" y="654.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">8</text>
+  <rect x="269" y="631" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="631" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="631" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="631" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="631" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="631" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="631" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="631" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="214.00" y="686.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">9</text>
+  <rect x="269" y="663" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="663" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="663" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="663" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="663" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="663" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="663" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="663" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="201.00" y="718.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">10</text>
+  <rect x="269" y="695" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="695" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="695" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="695" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="695" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="695" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="695" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="695" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="201.00" y="750.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">11</text>
+  <rect x="269" y="727" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="727" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="727" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="727" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="727" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="727" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="727" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="727" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="201.00" y="782.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">12</text>
+  <rect x="269" y="759" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="759" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="759" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="759" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="759" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="759" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="759" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="759" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="201.00" y="814.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">13</text>
+  <rect x="269" y="791" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="791" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="791" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="791" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="791" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="791" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="791" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="791" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="201.00" y="846.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">14</text>
+  <rect x="269" y="823" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="823" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="823" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="823" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="823" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="823" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="823" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="823" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <text x="201.00" y="878.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">15</text>
+  <rect x="269" y="855" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="358" y="855" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="447" y="855" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="855" width="89" height="32" rx="0" fill="#E3F5F1" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="625" y="855" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="714" y="855" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="803" y="855" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="892" y="855" width="89" height="32" rx="0" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1" />
+  <rect x="536" y="535" width="89" height="32" rx="0" fill="#FFF0D1" stroke="#B86400" stroke-width="2" />
+  <text x="566.50" y="558.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">43</text>
+  <polyline points="109,935 167,935" fill="none" stroke="#2563C8" stroke-width="4" stroke-linejoin="round" />
+  <polygon points="167.00,935.00 154.00,929.00 154.00,941.00" fill="#2563C8" />
+  <text x="189.00" y="942.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="400" dominant-baseline="alphabetic" fill="#2563C8">单股历史：按时间索引选槽，按真实时间输出。</text>
+  <polyline points="138,963 138,991" fill="none" stroke="#008A82" stroke-width="4" stroke-linejoin="round" />
+  <polygon points="138.00,991.00 144.00,978.00 132.00,978.00" fill="#008A82" />
+  <text x="189.00" y="987.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="400" dominant-baseline="alphabetic" fill="#008A82">时间横截面：沿列取数；每只证券取一条。</text>
+  <rect x="1130" y="238" width="726" height="770" rx="16" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="1163.00" y="300.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="30" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">计算地址 · 不逐条保存偏移</text>
+  <text x="1165.00" y="364.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">group = 37 / 16 = 2</text>
+  <text x="1165.00" y="413.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">row = 37 % 16 = 5</text>
+  <text x="1165.00" y="462.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">band = 1003 / 128 = 7</text>
+  <text x="1165.00" y="511.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">j = (1003 % 128) / 8 = 13</text>
+  <text x="1165.00" y="560.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">col = 1003 % 8 = 3</text>
+  <polyline points="1165,582 1820,582" fill="none" stroke="#D8E2ED" stroke-width="2" stroke-linejoin="round" />
+  <text x="1165.00" y="630.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">非空块按 j = 0、4、13 连续存放</text>
+  <text x="1165.00" y="677.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">rank = 2</text>
+  <text x="1165.00" y="721.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">tile_offset = base_offset + 8192</text>
+  <text x="1165.00" y="770.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">slot = 5 × 8 + 3 = 43</text>
+  <text x="1165.00" y="813.40" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">块内偏移 = 43 × 32 = 1376 B</text>
+  <rect x="1164" y="845" width="656" height="111" rx="12" fill="#FFF0D1" stroke="#E2B262" stroke-width="1.5" />
+  <text x="1187.00" y="884.40" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">record_offset</text>
+  <text x="1187.00" y="932.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="33" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">= base_offset + 9568</text>
+  <text x="1165.00" y="994.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">确认存在位并校验块，再返回行情。</text>
+  <rect x="64" y="1050" width="1792" height="322" rx="16" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
+  <text x="100.00" y="1106.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">放大一条行情：七个字段固定顺序，连续 32 B</text>
+  <text x="117.00" y="1146.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="18" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">字节偏移</text>
+  <text x="116.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0</text>
+  <rect x="116" y="1181" width="211.0" height="108" rx="0" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="192.75" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">open</text>
+  <text x="156.00" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">int32  ·  4 B</text>
+  <text x="327.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">4</text>
+  <rect x="327.0" y="1181" width="211.0" height="108" rx="0" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="408.25" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">high</text>
+  <text x="367.00" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">int32  ·  4 B</text>
+  <text x="538.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">8</text>
+  <rect x="538.0" y="1181" width="211.0" height="108" rx="0" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="624.50" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">low</text>
+  <text x="578.00" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">int32  ·  4 B</text>
+  <text x="749.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">12</text>
+  <rect x="749.0" y="1181" width="211.0" height="108" rx="0" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="824.75" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">close</text>
+  <text x="789.00" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">int32  ·  4 B</text>
+  <text x="960.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">16</text>
+  <rect x="960.0" y="1181" width="211.0" height="108" rx="0" fill="#E3F5F1" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="1024.50" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">volume</text>
+  <text x="993.75" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">uint32  ·  4 B</text>
+  <text x="1171.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">20</text>
+  <rect x="1171.0" y="1181" width="422.0" height="108" rx="0" fill="#E3F5F1" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="1338.25" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">amount</text>
+  <text x="1310.25" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">uint64  ·  8 B</text>
+  <text x="1593.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">28</text>
+  <rect x="1593.0" y="1181" width="211.0" height="108" rx="0" fill="#FFF0D1" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="1622.50" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">adjust_factor</text>
+  <text x="1626.75" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">uint32  ·  4 B</text>
+  <text x="1779.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">32</text>
+  <text x="116.00" y="1340.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">32 B 内不保存表、证券、时间键、内部编号或字段名；七字段原样保存，不压缩。</text>
+  <text x="65.00" y="1430.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0.1.0-beta.1 · 磁盘格式 4  |  行编码为小端；amount 从偏移 20 开始，不能直接映射 C 结构体。</text>
+</svg>

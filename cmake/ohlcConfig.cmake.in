@@ -1,0 +1,5 @@
+@PACKAGE_INIT@
+include("${CMAKE_CURRENT_LIST_DIR}/ohlcTargets.cmake")
+set(ohlc_core_FOUND TRUE)
+set(ohlc_client_FOUND @OHLC_BUILD_NETWORK@)
+check_required_components(ohlc)

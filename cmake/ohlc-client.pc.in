@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: ohlc-client
+Description: OHLC network client
+Version: @PROJECT_VERSION@
+Requires: ohlc
+Libs: -L${libdir} -lohlc_client
+Cflags: -I${includedir}
