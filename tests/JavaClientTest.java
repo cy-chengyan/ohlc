@@ -22,6 +22,12 @@ public final class JavaClientTest {
             Ohlc.Table day = client.table("bars_5d");
             assert day.timeKey(day.formatTime(0xffffffffL)) == 0xffffffffL;
             assert client.tables(1, 128).size() == 2;
+            Ohlc.Table removed = client.create("java_drop", 1, true, "", "");
+            client.drop("java_drop");
+            Ohlc.Table replacement = client.create("java_drop", 1, true, "", "");
+            assert replacement.id > removed.id;
+            assert client.tables(removed.id, 1).get(0).id == replacement.id;
+            client.drop("java_drop");
             assert client.dictionary(0, 128).size() == 2;
             long count = 0;
             try (Ohlc.Query query = table.series("AAPL", "20260901 09:30:00", "@4294967296")) {

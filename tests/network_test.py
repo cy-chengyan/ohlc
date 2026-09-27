@@ -117,6 +117,19 @@ def main():
                 return result
             help_result = subprocess.run([shell, "--help"], capture_output=True, text=True, check=True)
             assert "help examples" in help_result.stdout
+            dropped = execute('help drop; create discard --period 1d; drop discard; '
+                              'create discard --period 1d; drop discard;')
+            assert dropped.stderr.count("Dropped discard commit_seq=") == 2
+            created_ids = [int(line.split("\t")[0]) for line in dropped.stdout.splitlines()
+                           if "\tdiscard\t" in line]
+            assert len(created_ids) == 2 and created_ids[1] > created_ids[0]
+            with Connection(**options) as client:
+                require_error(2, lambda: client.table("discard"))
+                transient = client.create("python_drop", period="1d")
+                client.drop("python_drop")
+                assert all(table.name != "python_drop" for table in client.tables())
+                with transient.cross("20260901") as query:
+                    require_error(2, lambda: next(query))
             assert "commit_seq=" in execute("checkpoint; stats;").stdout
             execute("help nonexistent;", 1)
             formatted = execute('cross bars_3m "20260901 09:30:00" --format table;')
@@ -147,6 +160,7 @@ def main():
                 reader.ping()
                 assert reader.stats()["table_count"] >= 2
                 require_error(8, reader.checkpoint)
+                require_error(8, lambda: reader.drop("bars_5d"))
                 require_error(8, lambda: reader.register("DENIED"))
                 with reader.table("bars_3m").cross(key) as query:
                     assert sum(chunk.count for chunk in query) == 2

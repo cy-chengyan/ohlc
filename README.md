@@ -114,6 +114,12 @@ quit;
 preview limit. Use `help examples;` for more commands. Stop the server with Ctrl+C in its terminal;
 `quit;` only closes the shell. Choose another socket path if the example path is already in use.
 
+`drop TABLE;` permanently deletes a table and its rows; see `help drop;`. Existing queries
+finish on their original snapshots before files are reclaimed. Recreating the name assigns
+a new table ID. C, Python, and Java also provide table deletion in both access modes.
+After using table deletion, keep this release or a newer one; older releases cannot read the
+deletion records. Existing databases can be opened directly by this release.
+
 ## Client libraries
 
 Both modes use the same storage engine and file format. **One process owns a database directory**:
@@ -218,6 +224,9 @@ listener, and resource budgets for your deployment, then validate before startin
 Command-line options override the file; configuration changes require a restart. Engine memory,
 block cache, network buffers, connection count, and query timeouts have separate controls.
 The engine memory budget is not a cap on total process RSS or operating-system page cache.
+Idle sessions remain connected after the handshake. `timeout-ms` limits handshake and request
+I/O, not time spent at the shell prompt. TCP keepalive detects unreachable peers; mutations
+with an uncertain outcome are never automatically retried.
 
 Unix sockets are private to their owner by default. TCP supports optional credentials and optional
 TLS independently, on both loopback and remote addresses. Omit both credential files for anonymous

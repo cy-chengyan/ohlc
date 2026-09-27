@@ -705,8 +705,11 @@ static ohlc_status save_catalog(ohlc_db* db, const ohlc_root* root, uint64_t* of
         return status;
     }
     size_t size = 32;
-    for (uint64_t id = 1; id <= root->table_count; id++) {
+    for (uint64_t id = 1; id <= root->last_table_id; id++) {
         const ohlc_table* table = ohlc_root_table(root, (uint32_t)id);
+        if (table == NULL) {
+            continue;
+        }
         size += 44u + strlen(table->info.name) + strlen(table->info.timezone) +
                 strlen(table->info.description);
         if (size > OHLC_RECORD_LIMIT) {
@@ -721,9 +724,17 @@ static ohlc_status save_catalog(ohlc_db* db, const ohlc_root* root, uint64_t* of
     ohlc_put_u64(payload + 8, root->ticker_count);
     ohlc_put_u64(payload + 16, db->dictionary_disk_offset);
     ohlc_put_u32(payload + 24, root->table_count);
+    /* Zero retains the original dense catalog encoding. A nonzero high-water
+     * ID marks a sparse catalog that older readers must reject. */
+    if (root->last_table_id != root->table_count) {
+        ohlc_put_u32(payload + 28, root->last_table_id);
+    }
     size_t position = 32;
-    for (uint64_t id = 1; id <= root->table_count; id++) {
+    for (uint64_t id = 1; id <= root->last_table_id; id++) {
         const ohlc_table* table = ohlc_root_table(root, (uint32_t)id);
+        if (table == NULL) {
+            continue;
+        }
         ohlc_put_u32(payload + position, table->info.id);
         ohlc_put_u64(payload + position + 8, table->info.created_seq);
         ohlc_put_u64(payload + position + 16, table->disk_offset);
@@ -824,7 +835,7 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
     }
     ohlc_root* root = NULL;
     if (size < 32 || ohlc_get_u64(payload) != checkpoint->seq ||
-        ohlc_get_u32(payload + 24) > db->options.max_tables || ohlc_get_u32(payload + 28) != 0) {
+        ohlc_get_u32(payload + 24) > db->options.max_tables) {
         status = OHLC_CORRUPT;
         goto cleanup;
     }
@@ -836,9 +847,21 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
     root->seq = checkpoint->seq;
     root->ticker_count = ohlc_get_u64(payload + 8);
     uint32_t table_count = ohlc_get_u32(payload + 24);
+    uint32_t last_table_id = ohlc_get_u32(payload + 28);
+    if (last_table_id == 0) {
+        last_table_id = table_count;
+    } else if (last_table_id < table_count) {
+        status = OHLC_CORRUPT;
+        goto cleanup;
+    }
     size_t position = 32;
-    for (uint64_t id = 1; id <= table_count; id++) {
-        if (size - position < 24 || ohlc_get_u32(payload + position) != id) {
+    for (uint32_t index = 0; index < table_count; index++) {
+        if (size - position < 24) {
+            status = OHLC_CORRUPT;
+            goto cleanup;
+        }
+        uint32_t id = ohlc_get_u32(payload + position);
+        if (id <= root->last_table_id || id > last_table_id) {
             status = OHLC_CORRUPT;
             goto cleanup;
         }
@@ -857,8 +880,9 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
         if (status != OHLC_OK) {
             goto cleanup;
         }
-        for (uint64_t previous = 1; previous < id; previous++) {
-            if (strcmp(ohlc_root_table(root, (uint32_t)previous)->info.name, info.name) == 0) {
+        for (uint64_t previous = 1; previous <= root->last_table_id; previous++) {
+            const ohlc_table* existing = ohlc_root_table(root, (uint32_t)previous);
+            if (existing != NULL && strcmp(existing->info.name, info.name) == 0) {
                 status = OHLC_CORRUPT;
                 goto cleanup;
             }
@@ -881,6 +905,7 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
         status = OHLC_CORRUPT;
         goto cleanup;
     }
+    root->last_table_id = last_table_id;
     status =
         load_dictionary(db, ohlc_get_u64(payload + 16), root->ticker_count, checkpoint->catalog);
     if (status != OHLC_OK) {
@@ -1106,10 +1131,13 @@ static void merge_checkpoint(ohlc_db* db, const ohlc_root* source, ohlc_root* sa
     }
     ohlc_root* merged = ohlc_root_copy(db, db->root);
     ohlc_status status = merged == NULL ? OHLC_LIMIT : OHLC_OK;
-    for (uint64_t id = 1; status == OHLC_OK && id <= source->table_count; id++) {
+    for (uint64_t id = 1; status == OHLC_OK && id <= source->last_table_id; id++) {
         const ohlc_table* before = ohlc_root_table(source, (uint32_t)id);
         const ohlc_table* current = ohlc_root_table(db->root, (uint32_t)id);
         ohlc_table* persisted = (ohlc_table*)ohlc_root_table(saved, (uint32_t)id);
+        if (before == NULL || current == NULL) {
+            continue;
+        }
         if (current == before) {
             status = ohlc_root_set_table(db, merged, (uint32_t)id, persisted);
         } else if (before != persisted) {
@@ -1147,9 +1175,9 @@ ohlc_status ohlc_checkpoint_run(ohlc_db* db) {
     }
     ohlc_status status = OHLC_OK;
     uint8_t* buffer = NULL;
-    for (uint64_t id = 1; id <= root->table_count; id++) {
+    for (uint64_t id = 1; id <= root->last_table_id; id++) {
         const ohlc_table* source = ohlc_root_table(source_root, (uint32_t)id);
-        if (source->disk_offset != 0 || source->time_count == 0) {
+        if (source == NULL || source->disk_offset != 0 || source->time_count == 0) {
             continue;
         }
         ohlc_table* table = NULL;
@@ -1169,7 +1197,7 @@ ohlc_status ohlc_checkpoint_run(ohlc_db* db) {
     if (status != OHLC_OK) {
         goto cleanup;
     }
-    for (uint64_t id = 1; id <= root->table_count; id++) {
+    for (uint64_t id = 1; id <= db->file_capacity; id++) {
         ohlc_table_files* files = db->files[id - 1];
         if (files == NULL) {
             continue;
@@ -1212,6 +1240,9 @@ cleanup:
     ohlc_free(&db->allocator, buffer);
     ohlc_root_release(db, root);
     ohlc_root_release(db, source_root);
+    if (status == OHLC_OK) {
+        status = ohlc_storage_reclaim_tables(db);
+    }
     return status;
 }
 
@@ -1227,16 +1258,31 @@ ohlc_status ohlc_checkpoint_background(ohlc_db* db) {
                    db->options.memory_limit / 2 ||
                written - db->checkpoint_wal_bytes >= 64u * 1024u * 1024u ||
                ohlc_monotonic_ms() - db->checkpoint_at_ms >= 300000;
-    for (uint64_t id = 1; changed && !due && id <= root->table_count; id++) {
+    for (uint64_t id = 1; changed && !due && id <= root->last_table_id; id++) {
         const ohlc_table* table = ohlc_root_table(root, (uint32_t)id);
         const ohlc_table* previous = saved == NULL ? NULL : ohlc_root_table(saved, (uint32_t)id);
         uint64_t old_count = previous == NULL ? 0 : previous->time_count;
-        due = table->time_count / 128u > old_count / 128u;
+        due = table != NULL && table->time_count / 128u > old_count / 128u;
     }
     ohlc_root_release(db, root);
     ohlc_status status = OHLC_OK;
-    if (changed && due) {
+    bool retire_checkpoint = false;
+    if (atomic_load(&db->reclaim_pending)) {
+        pthread_mutex_lock(&db->writer);
+        for (const ohlc_retired_table* entry = db->retired_tables; entry != NULL;
+             entry = entry->next) {
+            if (entry->sequence > db->checkpoint_sequences[0] ||
+                entry->sequence > db->checkpoint_sequences[1]) {
+                retire_checkpoint = true;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&db->writer);
+    }
+    if ((changed && due) || retire_checkpoint) {
         status = db->failed ? OHLC_IO : ohlc_checkpoint_run(db);
+    } else if (!db->failed) {
+        status = ohlc_storage_reclaim_tables(db);
     }
     pthread_mutex_unlock(&db->checkpoint_mutex);
     return status;
@@ -1363,8 +1409,17 @@ static ohlc_status replay_frame(ohlc_db* db, const uint8_t* frame) {
         return OHLC_CORRUPT;
     }
     ohlc_root* candidate = NULL;
+    ohlc_retired_table* retired = NULL;
     ohlc_status status = OHLC_OK;
-    if (type == 2) {
+    if (type == 4) {
+        if (count != 1 || size != 0) {
+            return OHLC_CORRUPT;
+        }
+        status = ohlc_prepare_drop(db, db->root, table, &candidate, &retired);
+        if (status == OHLC_NOT_FOUND) {
+            status = OHLC_CORRUPT;
+        }
+    } else if (type == 2) {
         if (count == 0 || count > OHLC_MAX_BATCH_ROWS || size != (size_t)count * 40u) {
             return OHLC_CORRUPT;
         }
@@ -1398,11 +1453,13 @@ static ohlc_status replay_frame(ohlc_db* db, const uint8_t* frame) {
             info.id = table;
             info.created_seq = seq;
             status = ohlc_definition_decode(payload, size, &info);
-            if (status == OHLC_OK && table != candidate->table_count + 1) {
+            if (status == OHLC_OK &&
+                (candidate->last_table_id == UINT32_MAX || table != candidate->last_table_id + 1)) {
                 status = OHLC_CORRUPT;
             }
-            for (uint64_t id = 1; status == OHLC_OK && id <= candidate->table_count; id++) {
-                if (strcmp(ohlc_root_table(candidate, (uint32_t)id)->info.name, info.name) == 0) {
+            for (uint64_t id = 1; status == OHLC_OK && id <= candidate->last_table_id; id++) {
+                const ohlc_table* existing = ohlc_root_table(candidate, (uint32_t)id);
+                if (existing != NULL && strcmp(existing->info.name, info.name) == 0) {
                     status = OHLC_CORRUPT;
                 }
             }
@@ -1415,8 +1472,14 @@ static ohlc_status replay_frame(ohlc_db* db, const uint8_t* frame) {
     }
     if (status == OHLC_OK) {
         ohlc_root_publish(db, candidate);
+        if (retired != NULL) {
+            retired->next = db->retired_tables;
+            db->retired_tables = retired;
+            atomic_store(&db->reclaim_pending, true);
+        }
     } else {
         ohlc_root_release(db, candidate);
+        ohlc_free(&db->allocator, retired);
     }
     return status;
 }
@@ -1643,6 +1706,9 @@ ohlc_status ohlc_recover(ohlc_db* db, bool fresh) {
         db->checkpoint_root = ohlc_root_acquire(db);
         db->checkpoint_at_ms = ohlc_monotonic_ms();
         status = replay_wal(db, &entries[selected]);
+        if (status == OHLC_OK) {
+            status = ohlc_storage_find_retired(db);
+        }
         if (status == OHLC_OK) {
             status = wal_reclaim(db);
         }

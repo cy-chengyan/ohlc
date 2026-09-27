@@ -43,7 +43,7 @@ bool ohlc_client_connected(const ohlc_client* client);
  * single-owner caller may use shutdown(fd, SHUT_RDWR) to interrupt I/O. */
 int ohlc_client_socket(const ohlc_client* client);
 
-/* Low-level, single-frame metadata RPC. Opcodes 2..4 and 7..13 only.
+/* Low-level, single-frame metadata RPC. Opcodes 2..4 and 7..14 only.
  * The returned little-endian body is borrowed until the next client operation.
  * Malformed or truncated responses break the connection. A mutation whose
  * outcome cannot be established returns OHLC_OUTCOME_UNKNOWN. */
@@ -52,6 +52,9 @@ ohlc_status ohlc_client_call(ohlc_client* client, uint16_t opcode, const void* b
 ohlc_status ohlc_client_table_open(ohlc_client* client, const char* name, ohlc_table_info* output);
 ohlc_status ohlc_client_table_create(ohlc_client* client, const ohlc_table_definition* definition,
                                      ohlc_table_info* output);
+/* Requires write access. Deletes this ID, never a replacement with the same
+ * name. An uncertain acknowledgement returns OHLC_OUTCOME_UNKNOWN. */
+ohlc_status ohlc_client_table_drop(ohlc_client* client, uint32_t table_id, uint64_t* sequence);
 ohlc_status ohlc_client_resolve(ohlc_client* client, ohlc_bytes ticker, uint32_t* code);
 ohlc_status ohlc_client_register(ohlc_client* client, ohlc_bytes ticker, uint32_t* code,
                                  uint64_t* sequence);

@@ -621,6 +621,131 @@ static void test_wal_retention(void) {
     remove_directory(path);
 }
 
+static void test_drop_recovery(void) {
+    char path[] = "/tmp/ohlc-drop-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    options.max_tables = 1;
+    options.cache_bytes = 0;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"bars", OHLC_DAY, 1, "", ""};
+    ohlc_table_info old;
+    OK(ohlc_table_create(db, &definition, &old));
+    uint32_t ticker;
+    uint64_t sequence;
+    OK(ohlc_register(db, (ohlc_bytes){"AAPL", 4}, &ticker, &sequence));
+    uint8_t record[OHLC_WRITE_BYTES];
+    ohlc_row row = value_for(ticker, 1);
+    ohlc_write_encode(record, ticker, 1, &row);
+    OK(ohlc_write(db, old.id, record, 1, &sequence));
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_checkpoint(db));
+    size_t budget = db->allocator.limit;
+    db->allocator.limit = atomic_load(&db->allocator.used);
+    uint64_t unchanged = sequence;
+    CHECK(ohlc_table_drop(db, old.id, &sequence) == OHLC_LIMIT);
+    CHECK(sequence == unchanged);
+    db->allocator.limit = budget;
+    OK(ohlc_table_get(db, old.id, &old));
+    OK(ohlc_close(db));
+
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        OK(ohlc_open(path, &options, &db));
+        OK(ohlc_table_drop(db, old.id, &sequence));
+        _exit(0);
+    }
+    int status = 0;
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    OK(ohlc_open(path, &options, &db));
+    CHECK(ohlc_table_get(db, old.id, &old) == OHLC_NOT_FOUND);
+    ohlc_table_info replacement;
+    OK(ohlc_table_create(db, &definition, &replacement));
+    CHECK(replacement.id > old.id);
+    OK(ohlc_write(db, replacement.id, record, 1, &sequence));
+    char directory[1024];
+    snprintf(directory, sizeof(directory), "%s/tables/%08x", path, old.id);
+    OK(ohlc_checkpoint(db));
+    CHECK(access(directory, F_OK) == 0);
+    ohlc_cursor* cursor = NULL;
+    OK(ohlc_cross(db, replacement.id, 1, &cursor));
+    OK(ohlc_checkpoint(db));
+    CHECK(access(directory, F_OK) == 0);
+    ohlc_cursor_close(cursor);
+    OK(ohlc_checkpoint(db));
+    CHECK(access(directory, F_OK) != 0);
+    OK(ohlc_close(db));
+    OK(ohlc_open(path, &options, &db));
+    CHECK(ohlc_table_get(db, old.id, &old) == OHLC_NOT_FOUND);
+    check_series(db, replacement.id, ticker, 1, 2, false);
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
+typedef struct {
+    ohlc_db* db;
+    ohlc_status status;
+} drop_checkpoint_job;
+
+static void* checkpoint_during_drop(void* argument) {
+    drop_checkpoint_job* job = argument;
+    job->status = ohlc_checkpoint(job->db);
+    return NULL;
+}
+
+static void test_drop_checkpoint_race(void) {
+    char path[] = "/tmp/ohlc-drop-race-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    options.cache_bytes = 0;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"bars", OHLC_DAY, 1, "", ""};
+    ohlc_table_info table;
+    OK(ohlc_table_create(db, &definition, &table));
+    uint32_t ticker;
+    uint64_t sequence;
+    OK(ohlc_register(db, (ohlc_bytes){"AAPL", 4}, &ticker, &sequence));
+    uint8_t record[OHLC_WRITE_BYTES];
+    ohlc_row row = value_for(ticker, 1);
+    ohlc_write_encode(record, ticker, 1, &row);
+    OK(ohlc_write(db, table.id, record, 1, &sequence));
+
+    /* Pause file publication after the checkpoint pins the pre-drop root.
+     * Its later merge must not put the removed table back into the live root. */
+    ohlc_root* pinned = ohlc_root_acquire(db);
+    pthread_mutex_lock(&db->storage_mutex);
+    drop_checkpoint_job job = {.db = db};
+    pthread_t worker;
+    CHECK(pthread_create(&worker, NULL, checkpoint_during_drop, &job) == 0);
+    uint64_t deadline = ohlc_monotonic_ms() + 5000;
+    while (atomic_load(&pinned->refs) < 3) {
+        CHECK(ohlc_monotonic_ms() < deadline);
+        struct timespec delay = {.tv_nsec = 1000000};
+        nanosleep(&delay, NULL);
+    }
+    OK(ohlc_table_drop(db, table.id, &sequence));
+    pthread_mutex_unlock(&db->storage_mutex);
+    CHECK(pthread_join(worker, NULL) == 0);
+    CHECK(job.status == OHLC_OK);
+    ohlc_root_release(db, pinned);
+    CHECK(ohlc_table_get(db, table.id, &table) == OHLC_NOT_FOUND);
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_close(db));
+    OK(ohlc_open(path, &options, &db));
+    CHECK(ohlc_table_get(db, table.id, &table) == OHLC_NOT_FOUND);
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
 int main(void) {
     test_format();
     test_time_tree();
@@ -628,6 +753,8 @@ int main(void) {
     test_database();
     test_wal_retention();
     test_ordered_batches();
+    test_drop_recovery();
+    test_drop_checkpoint_race();
     puts("format, indexes, snapshots, volume rollover, WAL, checkpoint and recovery: OK");
     return 0;
 }

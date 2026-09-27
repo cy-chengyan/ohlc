@@ -185,22 +185,30 @@ static void volume_close(ohlc_db* db, ohlc_volume* volume) {
     ohlc_free(&db->allocator, volume);
 }
 
+static void table_files_close(ohlc_db* db, ohlc_table_files* files) {
+    if (files == NULL) {
+        return;
+    }
+    if (files->index_fd >= 0) {
+        close(files->index_fd);
+    }
+    for (size_t i = 0; i < files->volume_count; i++) {
+        volume_close(db, files->volumes[i]);
+    }
+    ohlc_free(&db->allocator, files->volumes);
+    ohlc_free(&db->allocator, files);
+}
+
 void ohlc_storage_close(ohlc_db* db) {
     if (db->files != NULL) {
-        for (uint32_t i = 0; i < db->options.max_tables; i++) {
-            ohlc_table_files* files = db->files[i];
-            if (files == NULL) {
-                continue;
-            }
-            if (files->index_fd >= 0) {
-                close(files->index_fd);
-            }
-            for (size_t j = 0; j < files->volume_count; j++) {
-                volume_close(db, files->volumes[j]);
-            }
-            ohlc_free(&db->allocator, files->volumes);
-            ohlc_free(&db->allocator, files);
+        for (size_t i = 0; i < db->file_capacity; i++) {
+            table_files_close(db, db->files[i]);
         }
+    }
+    while (db->retired_tables != NULL) {
+        ohlc_retired_table* next = db->retired_tables->next;
+        ohlc_free(&db->allocator, db->retired_tables);
+        db->retired_tables = next;
     }
     ohlc_free(&db->allocator, db->files);
     if (db->wal_fd >= 0) {
@@ -374,6 +382,199 @@ static ohlc_status table_directory(ohlc_db* db, uint32_t id, bool create, int* o
     return status;
 }
 
+static uint32_t table_directory_id(const char* name) {
+    if (strlen(name) != 8) {
+        return 0;
+    }
+    uint32_t id = 0;
+    for (size_t i = 0; i < 8; i++) {
+        unsigned int digit;
+        if (name[i] >= '0' && name[i] <= '9') {
+            digit = (unsigned int)(name[i] - '0');
+        } else if (name[i] >= 'a' && name[i] <= 'f') {
+            digit = (unsigned int)(name[i] - 'a') + 10u;
+        } else {
+            return 0;
+        }
+        id = id * 16u + digit;
+    }
+    return id;
+}
+
+ohlc_status ohlc_storage_find_retired(ohlc_db* db) {
+    if (db->root->last_table_id == db->root->table_count) {
+        return OHLC_OK;
+    }
+    int fd = openat(db->directory_fd, "tables", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+        return errno == ENOENT ? OHLC_OK : OHLC_IO;
+    }
+    DIR* directory = fdopendir(fd);
+    if (directory == NULL) {
+        close(fd);
+        return OHLC_IO;
+    }
+    ohlc_status status = OHLC_OK;
+    for (;;) {
+        errno = 0;
+        struct dirent* entry = readdir(directory);
+        if (entry == NULL) {
+            status = errno == 0 ? OHLC_OK : OHLC_IO;
+            break;
+        }
+        uint32_t id = table_directory_id(entry->d_name);
+        if (id == 0 || id > db->root->last_table_id || ohlc_root_table(db->root, id) != NULL) {
+            continue;
+        }
+        const ohlc_retired_table* existing = db->retired_tables;
+        while (existing != NULL && existing->id != id) {
+            existing = existing->next;
+        }
+        if (existing != NULL) {
+            continue;
+        }
+        ohlc_retired_table* retired = ohlc_alloc(&db->allocator, sizeof(*retired));
+        if (retired == NULL) {
+            status = OHLC_LIMIT;
+            break;
+        }
+        /* After a crash, use the recovered sequence as a conservative fence.
+         * Two subsequent checkpoints make either recovery root independent. */
+        retired->id = id;
+        retired->sequence = db->root->seq;
+        retired->next = db->retired_tables;
+        db->retired_tables = retired;
+        atomic_store(&db->reclaim_pending, true);
+    }
+    closedir(directory);
+    return status;
+}
+
+static bool table_file_name(const char* name) {
+    if (strcmp(name, "index-000001.dat") == 0) {
+        return true;
+    }
+    if (strncmp(name, "data-", 5) != 0) {
+        return false;
+    }
+    const char* suffix = name + 5;
+    uint64_t volume = 0;
+    while (*suffix >= '0' && *suffix <= '9' && volume <= UINT32_MAX) {
+        volume = volume * 10u + (unsigned int)(*suffix++ - '0');
+    }
+    if (volume == 0 || volume > UINT32_MAX ||
+        (strcmp(suffix, ".dat") != 0 && strcmp(suffix, ".meta") != 0)) {
+        return false;
+    }
+    char canonical[64];
+    snprintf(canonical, sizeof(canonical), "data-%06u%s", (uint32_t)volume, suffix);
+    return strcmp(name, canonical) == 0;
+}
+
+static ohlc_status remove_table_directory(ohlc_db* db, uint32_t id) {
+    int fd = -1;
+    ohlc_status status = table_directory(db, id, false, &fd);
+    if (status != OHLC_OK) {
+        return status == OHLC_NOT_FOUND ? OHLC_OK : status;
+    }
+    DIR* directory = fdopendir(fd);
+    if (directory == NULL) {
+        close(fd);
+        return OHLC_IO;
+    }
+    for (;;) {
+        errno = 0;
+        struct dirent* entry = readdir(directory);
+        if (entry == NULL) {
+            status = errno == 0 ? OHLC_OK : OHLC_IO;
+            break;
+        }
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        struct stat information;
+        if (!table_file_name(entry->d_name) ||
+            fstatat(fd, entry->d_name, &information, AT_SYMLINK_NOFOLLOW) != 0 ||
+            !S_ISREG(information.st_mode)) {
+            status = OHLC_IO;
+            break;
+        }
+        if (unlinkat(fd, entry->d_name, 0) != 0) {
+            status = OHLC_IO;
+            break;
+        }
+    }
+    if (status == OHLC_OK && fsync(fd) != 0) {
+        status = OHLC_IO;
+    }
+    closedir(directory);
+    if (status != OHLC_OK) {
+        return status;
+    }
+    int parent =
+        openat(db->directory_fd, "tables", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (parent < 0) {
+        return OHLC_IO;
+    }
+    char name[16];
+    snprintf(name, sizeof(name), "%08x", id);
+    if (unlinkat(parent, name, AT_REMOVEDIR) != 0 || fsync(parent) != 0) {
+        status = OHLC_IO;
+    }
+    close(parent);
+    return status;
+}
+
+/* Called by the checkpoint owner; writer protects the retirement list.
+ * Cursors increment their count before acquiring a root. A cursor that starts
+ * after deletion cannot reference the retired table. Existing cursors defer
+ * reclamation without adding a lookup to the query or row-reading path. */
+ohlc_status ohlc_storage_reclaim_tables(ohlc_db* db) {
+    if (!atomic_load(&db->reclaim_pending)) {
+        return OHLC_OK;
+    }
+    pthread_mutex_lock(&db->writer);
+    ohlc_status status = OHLC_OK;
+    if (atomic_load_explicit(&db->cursor_count, memory_order_acquire) != 0) {
+        pthread_mutex_unlock(&db->writer);
+        return OHLC_OK;
+    }
+    ohlc_retired_table** position = &db->retired_tables;
+    while (*position != NULL) {
+        ohlc_retired_table* entry = *position;
+        if (entry->sequence > db->checkpoint_sequences[0] ||
+            entry->sequence > db->checkpoint_sequences[1]) {
+            position = &entry->next;
+            continue;
+        }
+        status = remove_table_directory(db, entry->id);
+        if (status != OHLC_OK) {
+            break;
+        }
+        pthread_mutex_lock(&db->storage_mutex);
+        if (entry->id <= db->file_capacity) {
+            table_files_close(db, db->files[entry->id - 1]);
+            db->files[entry->id - 1] = NULL;
+        }
+        pthread_mutex_unlock(&db->storage_mutex);
+        for (size_t shard = 0; shard < 16; shard++) {
+            ohlc_cache* cache = &db->cache[shard];
+            pthread_mutex_lock(&cache->mutex);
+            for (size_t slot = 0; slot < cache->count; slot++) {
+                if (cache->entries[slot].table == entry->id) {
+                    cache->entries[slot].valid = false;
+                }
+            }
+            pthread_mutex_unlock(&cache->mutex);
+        }
+        *position = entry->next;
+        ohlc_free(&db->allocator, entry);
+    }
+    atomic_store(&db->reclaim_pending, db->retired_tables != NULL);
+    pthread_mutex_unlock(&db->writer);
+    return status;
+}
+
 static ohlc_status next_volume_id(int directory, uint64_t* next) {
     int fd = openat(directory, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (fd < 0) {
@@ -417,8 +618,21 @@ static ohlc_status next_volume_id(int directory, uint64_t* next) {
 /* The commit/checkpoint owner serializes calls that may create file objects. */
 ohlc_status ohlc_storage_table(ohlc_db* db, uint32_t table_id, bool create,
                                ohlc_table_files** output) {
-    if (table_id == 0 || table_id > db->options.max_tables) {
+    if (table_id == 0) {
         return OHLC_CORRUPT;
+    }
+    if (table_id > db->file_capacity) {
+        size_t capacity = ((size_t)table_id + 255u) & ~(size_t)255u;
+        ohlc_table_files** files = ohlc_alloc(&db->allocator, capacity * sizeof(*files));
+        if (files == NULL) {
+            return OHLC_LIMIT;
+        }
+        pthread_mutex_lock(&db->storage_mutex);
+        memcpy(files, db->files, db->file_capacity * sizeof(*files));
+        ohlc_free(&db->allocator, db->files);
+        db->files = files;
+        db->file_capacity = capacity;
+        pthread_mutex_unlock(&db->storage_mutex);
     }
     if (db->files[table_id - 1] != NULL) {
         *output = db->files[table_id - 1];
@@ -538,7 +752,7 @@ ohlc_status ohlc_storage_load_volume(ohlc_db* db, ohlc_table_files* files, uint3
 }
 
 static ohlc_volume* find_volume(ohlc_db* db, uint32_t table, uint32_t volume) {
-    if (table == 0 || table > db->options.max_tables || volume == 0) {
+    if (table == 0 || table > db->file_capacity || volume == 0) {
         return NULL;
     }
     ohlc_table_files* files = db->files[table - 1];

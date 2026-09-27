@@ -419,26 +419,40 @@ static ohlc_status check_database(ohlc_db* db) {
     ohlc_get_stats(db, &stats);
     uint8_t buffer[256 * OHLC_RESULT_BYTES];
     uint64_t rows = 0;
-    for (uint64_t table = 1; table <= stats.table_count; table++) {
-        for (uint64_t ticker = 0; ticker < stats.ticker_count; ticker++) {
-            ohlc_cursor* cursor = NULL;
-            ohlc_status status = ohlc_series(db, (uint32_t)table, (uint32_t)ticker, 0,
-                                             UINT64_C(4294967296), &cursor);
-            if (status == OHLC_NOT_FOUND) {
-                continue;
-            }
-            size_t count = 1;
-            while (status == OHLC_OK && count != 0) {
-                status = ohlc_cursor_next(cursor, buffer, 256, &count);
-                if (status == OHLC_OK) {
-                    rows += count;
+    ohlc_table_info tables[16];
+    for (uint64_t start = 1; start <= UINT32_MAX;) {
+        size_t table_count = 0;
+        uint64_t sequence;
+        ohlc_status status =
+            ohlc_table_list(db, (uint32_t)start, tables, 16, &table_count, &sequence);
+        if (status != OHLC_OK) {
+            return status;
+        }
+        if (table_count == 0) {
+            break;
+        }
+        for (size_t table = 0; table < table_count; table++) {
+            for (uint64_t ticker = 0; ticker < stats.ticker_count; ticker++) {
+                ohlc_cursor* cursor = NULL;
+                status = ohlc_series(db, tables[table].id, (uint32_t)ticker, 0,
+                                     UINT64_C(4294967296), &cursor);
+                if (status == OHLC_NOT_FOUND) {
+                    continue;
+                }
+                size_t count = 1;
+                while (status == OHLC_OK && count != 0) {
+                    status = ohlc_cursor_next(cursor, buffer, 256, &count);
+                    if (status == OHLC_OK) {
+                        rows += count;
+                    }
+                }
+                ohlc_cursor_close(cursor);
+                if (status != OHLC_OK) {
+                    return status;
                 }
             }
-            ohlc_cursor_close(cursor);
-            if (status != OHLC_OK) {
-                return status;
-            }
         }
+        start = (uint64_t)tables[table_count - 1].id + 1;
     }
     printf("verified_rows=%" PRIu64 " tables=%" PRIu32 " tickers=%" PRIu64 " commit_seq=%" PRIu64
            "\n",

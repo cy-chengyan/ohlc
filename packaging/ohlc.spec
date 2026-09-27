@@ -6,7 +6,7 @@
 
 Name:           ohlc
 Version:        0.1.0~beta.1
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        Fixed-row OHLC storage engine and service
 License:        Apache-2.0
 URL:            https://github.com/cy-chengyan/ohlc

@@ -49,6 +49,9 @@ public final class Database implements AutoCloseable {
         private static native long[] stats(long database);
         private static native void checkpoint(long database) throws Ohlc.Failure;
         private static native byte[] table(long database, byte[] name, long id) throws Ohlc.Failure;
+        private static native byte[][] tables(long database, long start, int limit)
+            throws Ohlc.Failure;
+        private static native long drop(long database, long id) throws Ohlc.Failure;
         private static native byte[] create(long database, byte[] name, long period, boolean days,
                                            byte[] timezone, byte[] description) throws Ohlc.Failure;
         private static native long[] ticker(long database, byte[] ticker, boolean register)
@@ -250,6 +253,19 @@ public final class Database implements AutoCloseable {
         }
     }
 
+    /** Permanently delete the resolved table while preserving existing query snapshots. */
+    public long drop(String name) throws IOException {
+        state.lifecycle.readLock().lock();
+        try {
+            long handle = state.requireOpen();
+            Table table = decodeTable(Native.table(handle, text(name), 0));
+            return Native.drop(handle, table.id);
+        } finally {
+            Reference.reachabilityFence(Database.this);
+            state.lifecycle.readLock().unlock();
+        }
+    }
+
     /** Return at most limit tables. Continue at last.id + 1; maximum page is 256. */
     public List<Table> tables(long start, int limit) throws IOException {
         page(start, limit);
@@ -257,10 +273,9 @@ public final class Database implements AutoCloseable {
         state.lifecycle.readLock().lock();
         try {
             long handle = state.requireOpen();
-            long end = Math.min(stats().tableCount() + 1, start + limit);
             List<Table> result = new ArrayList<>();
-            for (long id = start; id < end; id++) {
-                result.add(decodeTable(Native.table(handle, null, id)));
+            for (byte[] definition : Native.tables(handle, start, limit)) {
+                result.add(decodeTable(definition));
             }
             return List.copyOf(result);
         } finally {

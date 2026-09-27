@@ -123,9 +123,16 @@ typedef struct ohlc_root {
     uint64_t seq;
     uint64_t ticker_count;
     uint32_t table_count;
+    uint32_t last_table_id;
     size_t page_count;
     ohlc_table_page** pages;
 } ohlc_root;
+
+typedef struct ohlc_retired_table {
+    struct ohlc_retired_table* next;
+    uint64_t sequence;
+    uint32_t id;
+} ohlc_retired_table;
 
 typedef struct ohlc_ticker_entry {
     struct ohlc_ticker_entry* next;
@@ -277,6 +284,9 @@ struct ohlc_db {
     size_t ticker_page_count;
     uint64_t dictionary_count;
     ohlc_table_files** files;
+    size_t file_capacity;
+    ohlc_retired_table* retired_tables;
+    _Atomic bool reclaim_pending;
     ohlc_cache cache[16];
     ohlc_io_pool io;
     bool io_initialized;
@@ -367,6 +377,11 @@ const ohlc_table* ohlc_root_table(const ohlc_root* root, uint32_t id);
 ohlc_status ohlc_root_edit_table(ohlc_db* db, ohlc_root* root, uint32_t id, ohlc_table** output);
 ohlc_status ohlc_root_set_table(ohlc_db* db, ohlc_root* root, uint32_t id, ohlc_table* table);
 ohlc_status ohlc_root_add_table(ohlc_db* db, ohlc_root* root, const ohlc_table_info* info);
+ohlc_status ohlc_root_drop_table(ohlc_db* db, ohlc_root* root, uint32_t id);
+ohlc_status ohlc_prepare_drop(ohlc_db* db, const ohlc_root* source, uint32_t id,
+                              ohlc_root** candidate, ohlc_retired_table** retired);
+ohlc_status ohlc_storage_find_retired(ohlc_db* db);
+ohlc_status ohlc_storage_reclaim_tables(ohlc_db* db);
 void ohlc_table_release(ohlc_allocator* a, ohlc_table* table);
 ohlc_status ohlc_prepare_write(ohlc_db* db, const ohlc_root* source, uint32_t table_id,
                                const uint8_t* rows, size_t count, ohlc_root** output);

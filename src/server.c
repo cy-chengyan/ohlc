@@ -105,7 +105,7 @@ static ohlc_status dispatch(server* instance, const ohlc_frame* request, const u
     size_t size = request->size;
     uint16_t opcode = request->opcode;
     *output_size = 0;
-    if ((opcode == 7 || opcode == 8 || opcode == 9 || opcode == 13) &&
+    if ((opcode == 7 || opcode == 8 || opcode == 9 || opcode == 13 || opcode == 14) &&
         (capabilities & OHLC_CAP_WRITE) == 0) {
         return OHLC_UNAUTHORIZED;
     }
@@ -130,6 +130,18 @@ static ohlc_status dispatch(server* instance, const ohlc_frame* request, const u
     }
     if (opcode == 13) {
         return size == 0 ? ohlc_checkpoint(db) : OHLC_INVALID;
+    }
+    if (opcode == 14) {
+        if (size != 4) {
+            return OHLC_INVALID;
+        }
+        uint64_t sequence;
+        ohlc_status status = ohlc_table_drop(db, ohlc_get_u32(body), &sequence);
+        if (status == OHLC_OK) {
+            ohlc_put_u64(output, sequence);
+            *output_size = 8;
+        }
+        return status;
     }
     if (opcode == 3 || opcode == 7) {
         ohlc_bytes ticker;
@@ -310,6 +322,13 @@ static void* serve_connection(void* argument) {
         }
     }
     while (output != NULL && !atomic_load(&instance->stopping)) {
+        /* Idle time is not request I/O time. TLS may already hold the next
+         * request, even when the underlying socket is no longer readable. */
+        bool buffered = peer->transport.ssl != NULL && SSL_has_pending(peer->transport.ssl);
+        if (hello && !buffered &&
+            ohlc_net_wait(peer->transport.fd, POLLIN, UINT64_MAX) != OHLC_OK) {
+            break;
+        }
         uint64_t deadline = ohlc_monotonic_ms() + instance->timeout_ms;
         ohlc_frame request;
         if (ohlc_net_header(&peer->transport, &request, deadline) != OHLC_OK ||

@@ -85,6 +85,12 @@ public final class JavaEmbeddedTest {
             Database.Table minute = db.table("bars_3m");
             assert minute.description.equals("UTF-8 \ud83d\udcc8");
             assert db.tables(1, 128).size() == 2;
+            Database.Table removed = db.create("java_drop", 1, true, "", "");
+            db.drop("java_drop");
+            Database.Table replacement = db.create("java_drop", 1, true, "", "");
+            assert replacement.id > removed.id;
+            assert db.tables(removed.id, 1).get(0).id == replacement.id;
+            db.drop("java_drop");
             assert db.dictionary(0, 128).size() == 2;
             byte[] binary = {'0', '0', 0, (byte) 255, '\n'};
             assert db.resolve(binary) == 1;

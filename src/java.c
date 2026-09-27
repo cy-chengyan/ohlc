@@ -3,6 +3,7 @@
 #include "ohlc/ohlc.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Java owns the lifecycle locks. No call may outlive its database read lease,
@@ -245,6 +246,63 @@ JNIEXPORT jbyteArray JNICALL Java_io_ohlc_Database_00024Native_table(JNIEnv* env
         status = ohlc_table_open(database(db), text, &info);
     }
     return check(env, status) ? table_bytes(env, &info) : NULL;
+}
+
+JNIEXPORT jlong JNICALL Java_io_ohlc_Database_00024Native_drop(JNIEnv* env, jclass type, jlong db,
+                                                               jlong id) {
+    (void)type;
+    if (!uint32_valid(id)) {
+        check(env, OHLC_INVALID);
+        return 0;
+    }
+    uint64_t sequence = 0;
+    if (!check(env, ohlc_table_drop(database(db), (uint32_t)id, &sequence))) {
+        return 0;
+    }
+    return long_bits(sequence);
+}
+
+JNIEXPORT jobjectArray JNICALL Java_io_ohlc_Database_00024Native_tables(JNIEnv* env, jclass type,
+                                                                        jlong db, jlong start,
+                                                                        jint limit) {
+    (void)type;
+    if (!uint32_valid(start) || limit < 1 || limit > 256) {
+        check(env, OHLC_INVALID);
+        return NULL;
+    }
+    ohlc_table_info* tables = calloc((size_t)limit, sizeof(*tables));
+    if (tables == NULL) {
+        check(env, OHLC_LIMIT);
+        return NULL;
+    }
+    size_t count = 0;
+    uint64_t sequence;
+    if (!check(env, ohlc_table_list(database(db), (uint32_t)start, tables, (size_t)limit, &count,
+                                    &sequence))) {
+        free(tables);
+        return NULL;
+    }
+    jclass bytes_type = (*env)->FindClass(env, "[B");
+    jobjectArray result = NULL;
+    if (bytes_type != NULL) {
+        result = (*env)->NewObjectArray(env, (jsize)count, bytes_type, NULL);
+        (*env)->DeleteLocalRef(env, bytes_type);
+    }
+    for (size_t i = 0; result != NULL && i < count; i++) {
+        jbyteArray entry = table_bytes(env, &tables[i]);
+        if (entry == NULL) {
+            result = NULL;
+            break;
+        }
+        (*env)->SetObjectArrayElement(env, result, (jsize)i, entry);
+        (*env)->DeleteLocalRef(env, entry);
+        if ((*env)->ExceptionCheck(env)) {
+            result = NULL;
+            break;
+        }
+    }
+    free(tables);
+    return result;
 }
 
 JNIEXPORT jbyteArray JNICALL Java_io_ohlc_Database_00024Native_create(JNIEnv* env, jclass type,

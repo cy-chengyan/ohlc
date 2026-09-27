@@ -235,6 +235,16 @@ class Connection:
                                                          C.byref(info)))
             return Table(self, info)
 
+    def drop(self, name):
+        """Permanently delete the resolved table. Never retries an uncertain write."""
+        with self._lock:
+            table = self.table(name)
+            response = self._call(14, struct.pack("<I", table.id))
+            if len(response) != 8 or struct.unpack("<Q", response)[0] == 0:
+                self.close()
+                raise OutcomeUnknown(9, "Malformed table deletion acknowledgement")
+            return struct.unpack("<Q", response)[0]
+
     def _ticker_call(self, ticker, register):
         ticker = _ticker(ticker)
         with self._lock:

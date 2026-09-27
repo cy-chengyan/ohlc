@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import struct
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -144,10 +145,91 @@ def python_contract(path, library):
     return uuid
 
 
+def table_deletion(path, library):
+    options = DatabaseOptions(memory_limit=64 << 20, cache_bytes=4 << 20, max_tables=2)
+    with Database(path, create=True, options=options, library=library) as db:
+        keep = db.create("keep", period="1d")
+        old = db.create("replace", period="1d")
+        code, _ = db.register("AAPL")
+        keep.insert("AAPL", "20260901", EXTREMES)
+        old.insert("AAPL", "20260901", EXTREMES)
+        db.checkpoint()
+        db.checkpoint()
+        old_files = path / "tables" / f"{old.id:08x}"
+        assert old_files.is_dir()
+        snapshot = old.cross("20260901")
+        dropped = db.drop("replace")
+        assert db.stats()["commit_seq"] == dropped
+        assert db.stats()["table_count"] == 1
+        require_error(2, lambda: db.table("replace"))
+        require_error(2, lambda: db.drop("replace"))
+        require_error(2, lambda: old.cross("20260901"))
+        require_error(2, lambda: old.insert("AAPL", "20260901", EXTREMES))
+        new = db.create("replace", period="1d")
+        assert new.id > old.id
+        new.insert("AAPL", "20260901", (1,) * 7)
+        db.checkpoint()
+        db.checkpoint()
+        assert old_files.is_dir(), "A live snapshot must keep its table files"
+        assert results(snapshot) == [(code, *EXTREMES)]
+        db.checkpoint()
+        assert not old_files.exists()
+        assert results(new.cross("20260901")) == [(code, *((1,) * 7))]
+        assert [item.id for item in db.tables()] == [keep.id, new.id]
+        deleted_id = new.id
+
+    # Only WAL records cover this deletion: closing the embedded handle does
+    # not checkpoint. Recovery must not reopen the removed table or reuse its ID.
+    with Database(path, options=options, library=library) as db:
+        assert db.table("replace").id == deleted_id
+        db.drop("replace")
+    with Database(path, options=options, library=library) as db:
+        require_error(2, lambda: db.table("replace"))
+        previous = deleted_id
+        # Cross the 256-slot directory boundary while keeping max_tables=2.
+        for _ in range(260):
+            table = db.create("replace", period="1d")
+            assert table.id > previous
+            previous = table.id
+            db.drop("replace")
+        last = db.create("replace", period="1d")
+        last.insert("AAPL", "20260901", (2,) * 7)
+        db.checkpoint()
+        db.checkpoint()
+        assert not (path / "tables" / f"{deleted_id:08x}").exists()
+        assert len(list((path / "tables").iterdir())) == 2
+        assert db.stats()["table_count"] == 2
+
+    admin = str(Path(library).with_name("ohlc-admin"))
+    archive = path.with_name("drop-backup.ohlc")
+    restored = path.with_name("drop-restored")
+    for arguments in (("check", path), ("backup", path, archive),
+                      ("restore", archive, restored), ("check", restored)):
+        result = subprocess.run([admin, *map(str, arguments)], check=True,
+                                capture_output=True, text=True, timeout=15)
+        if arguments[0] == "check":
+            assert "verified_rows=2 tables=2" in result.stdout
+
+    # Losing the newer CURRENT entry must not resurrect a table whose files
+    # have already been reclaimed; the other checkpoint is independently valid.
+    fallback = path.with_name("drop-fallback")
+    shutil.copytree(path, fallback)
+    slots = [fallback / "CURRENT.0", fallback / "CURRENT.1"]
+    newest = max(slots, key=lambda slot: struct.unpack_from("<Q", slot.read_bytes(), 32)[0])
+    damaged = bytearray(newest.read_bytes())
+    damaged[0] ^= 1
+    newest.write_bytes(damaged)
+    with Database(fallback, options=options, library=library) as db:
+        assert [item.id for item in db.tables()] == [keep.id, last.id]
+        assert results(db.table("keep").cross("20260901")) == [(code, *EXTREMES)]
+        assert results(db.table("replace").cross("20260901")) == [(code, *((2,) * 7))]
+
+
 def main():
     library = os.path.abspath(sys.argv[1])
     with tempfile.TemporaryDirectory(prefix="ohlc-embed-", dir=os.environ.get("TMPDIR", "/tmp")) as temp:
         path = Path(temp) / "db"
+        table_deletion(Path(temp) / "drop", library)
         uuid = python_contract(path, library)
         if len(sys.argv) > 2:
             jni, classes, java = sys.argv[2:5]

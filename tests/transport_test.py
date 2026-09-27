@@ -6,6 +6,7 @@ from pathlib import Path
 import select
 import signal
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -93,6 +94,18 @@ def protocol_failures(library, shell):
     assert result.returncode == 4, result.stderr
     wait_fake(thread, errors)
 
+    def lost_drop_ack(peer):
+        operation, request, _ = receive(peer)
+        assert operation == 10
+        definition = struct.pack("<I", 4) + b"bars" + struct.pack("<IIII", 2, 1, 0, 0)
+        peer.sendall(frame(10, request, struct.pack("<IQ", 1, 1) + definition))
+        operation, _, body = receive(peer)
+        assert operation == 14 and body == struct.pack("<I", 1)
+    port, thread, errors = fake_server(lost_drop_ack)
+    with Connection(port=port, library=library) as client:
+        require_error(9, lambda: client.drop("bars"))
+    wait_fake(thread, errors)
+
     def partial_query(peer):
         operation, request, _ = receive(peer)
         assert operation == 10
@@ -145,6 +158,10 @@ def terminal_check(shell, socket_path, token, root):
         until(b"ohlc> ")
         os.write(master, b"discard this\x03")
         until(b"ohlc> ")
+        os.write(master, b"ping;\n")
+        until(b"PING OK")
+        until(b"ohlc> ")
+        time.sleep(1.1)
         os.write(master, b"create interactive --period 3m --timezone Asia/Shanghai;\n")
         until(b"Created commit_seq=")
         until(b"ohlc> ")
@@ -164,6 +181,22 @@ def terminal_check(shell, socket_path, token, root):
         os.close(master)
 
 
+def incomplete_requests(host, port):
+    # Handshake, partial headers and partial bodies still have bounded I/O time.
+    for part in ("hello", "header", "body"):
+        with socket.create_connection((host, port), timeout=3) as peer:
+            if part != "hello":
+                peer.sendall(frame(1, 1, struct.pack("<I", 0), flags=0))
+                assert receive(peer)[0] == 1
+            if part == "hello":
+                peer.sendall(b"O")
+            elif part == "header":
+                peer.sendall(frame(2, 2, flags=0)[:7])
+            else:
+                peer.sendall(frame(14, 2, struct.pack("<I", 1), flags=0)[:33])
+            assert peer.recv(1) == b"", part
+
+
 def plain_tcp(server, library, shell, root, token, authenticated):
     # Set an assigned non-loopback IPv4 address to exercise remote client policy.
     host = os.environ.get("OHLC_TEST_TCP_HOST", "127.0.0.1")
@@ -175,7 +208,7 @@ def plain_tcp(server, library, shell, root, token, authenticated):
     read_token.chmod(0o600)
     mode = "token" if authenticated else "anonymous"
     arguments = [server, "--data", str(root / f"plain-{mode}-db"), "--host", "0.0.0.0",
-                 "--port", str(port)]
+                 "--port", str(port), "--timeout-ms", "500"]
     if authenticated:
         arguments.extend(["--write-token-file", str(token), "--read-token-file", str(read_token)])
     process = subprocess.Popen(arguments, stderr=subprocess.PIPE)
@@ -183,12 +216,18 @@ def plain_tcp(server, library, shell, root, token, authenticated):
     options = dict(host=host, port=port, tls=False, token=credential, library=library)
     try:
         with connect_when_ready(process, **options) as client:
+            descriptor = client._lib.ohlc_client_socket(client._handle)
+            with socket.fromfd(descriptor, socket.AF_INET, socket.SOCK_STREAM) as transport:
+                assert transport.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) != 0
+            time.sleep(1.1)
             table = client.create("plain", period="1d")
             client.register("TCP")
             table.insert("TCP", "20260901", (1, 2, 3, 4, 5, 6, 7))
             with table.cross("20260901") as query:
                 rows = [row for chunk in query for row in chunk.rows()]
             assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+        if not authenticated:
+            incomplete_requests(host, port)
         if authenticated:
             for rejected in (b"", b"wrong"):
                 require_error(8, lambda: Connection(**dict(options, token=rejected)))
@@ -219,17 +258,26 @@ def anonymous_tls(server, library, root, certificate, private_key):
         port = reserve.getsockname()[1]
     arguments = [server, "--data", str(root / "tls-anonymous-db"), "--host", "0.0.0.0",
                  "--port", str(port), "--tls-cert", str(certificate),
-                 "--tls-key", str(private_key)]
+                 "--tls-key", str(private_key), "--timeout-ms", "500"]
     process = subprocess.Popen(arguments, stderr=subprocess.PIPE)
     try:
         with connect_when_ready(process, host="localhost", port=port, tls=True,
                                 ca_file=certificate, library=library) as client:
+            time.sleep(1.1)
             table = client.create("anonymous", period="1d")
             client.register("TLS")
             table.insert("TLS", "20260901", (1, 2, 3, 4, 5, 6, 7))
             with table.cross("20260901") as query:
                 rows = [row for chunk in query for row in chunk.rows()]
             assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+        context = ssl.create_default_context(cafile=str(certificate))
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as raw:
+            with context.wrap_socket(raw, server_hostname="localhost") as peer:
+                # One TLS write leaves the second request inside SSL buffers.
+                peer.sendall(frame(1, 1, struct.pack("<I", 0), flags=0)
+                             + frame(2, 2, flags=0))
+                assert receive(peer)[0] == 1
+                assert receive(peer) == (2, 2, b"")
     finally:
         process.send_signal(signal.SIGTERM)
         _, error = process.communicate(timeout=20)
@@ -294,7 +342,8 @@ def main():
             assert process.returncode == 0, error.decode()
         socket_path = str(root / "socket")
         process = subprocess.Popen([server, "--data", str(root / "terminal-db"), "--socket",
-                                    socket_path, "--write-token-file", str(token)], stderr=subprocess.PIPE)
+                                    socket_path, "--write-token-file", str(token),
+                                    "--timeout-ms", "500"], stderr=subprocess.PIPE)
         try:
             with connect_when_ready(process, socket=socket_path, token=b"test-writer", library=library):
                 pass

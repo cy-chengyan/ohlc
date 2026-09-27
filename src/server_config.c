@@ -69,7 +69,7 @@ static void usage(void) {
          "  --memory-mib N                  Engine allocator cap (default 1024)\n"
          "  --cache-mib N                   Tile cache budget (default 64; 0 disables)\n"
          "  --network-mib N                 Shared network buffers (default 128)\n"
-         "  --timeout-ms N                  Connection I/O timeout (default 30000)\n"
+         "  --timeout-ms N                  Handshake/request I/O timeout (default 30000)\n"
          "  --query-ms N                    Complete query deadline (default 30000)\n"
          "  --read-workers N                Shared disk read workers (0-16; default 0)\n"
          "  --wal-mib N                     WAL segment target (default 1024, minimum 16)\n"

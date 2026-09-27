@@ -63,6 +63,7 @@ def _library(path):
         "ohlc_checkpoint": ([pointer], C.c_int),
         "ohlc_table_open": ([pointer, C.c_char_p, C.POINTER(_Table)], C.c_int),
         "ohlc_table_create": ([pointer, C.POINTER(_Definition), C.POINTER(_Table)], C.c_int),
+        "ohlc_table_drop": ([pointer, C.c_uint32, C.POINTER(C.c_uint64)], C.c_int),
         "ohlc_table_list": ([pointer, C.c_uint32, C.POINTER(_Table), C.c_size_t,
                              C.POINTER(C.c_size_t), C.POINTER(C.c_uint64)], C.c_int),
         "ohlc_resolve": ([pointer, _Bytes, C.POINTER(C.c_uint32)], C.c_int),
@@ -224,6 +225,15 @@ class Database:
         with self._lease() as handle:
             self._check(self._lib.ohlc_table_create(handle, C.byref(definition), C.byref(info)))
         return EmbeddedTable(self, info)
+
+    def drop(self, name):
+        """Permanently delete the resolved table; existing cursors keep their snapshot."""
+        info = _Table()
+        sequence = C.c_uint64()
+        with self._lease() as handle:
+            self._check(self._lib.ohlc_table_open(handle, _text(name), C.byref(info)))
+            self._check(self._lib.ohlc_table_drop(handle, info.id, C.byref(sequence)))
+        return sequence.value
 
     def tables(self):
         """Iterate table pages; concurrent creations may appear in later pages."""

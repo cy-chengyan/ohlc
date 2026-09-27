@@ -292,7 +292,8 @@ public final class Ohlc implements AutoCloseable {
     }
 
     private synchronized ByteBuffer call(int operation, ByteBuffer body) throws IOException {
-        boolean mutation = operation == 7 || operation == 8 || operation == 9 || operation == 13;
+        boolean mutation = operation == 7 || operation == 8 || operation == 9
+            || operation == 13 || operation == 14;
         long previous = request;
         Frame frame;
         try {
@@ -391,6 +392,19 @@ public final class Ohlc implements AutoCloseable {
         Table table = decodeTable(response);
         exact(response, 0);
         return table;
+    }
+
+    /** Permanently delete the resolved table. Uncertain writes are never retried. */
+    public synchronized long drop(String name) throws IOException {
+        Table table = table(name);
+        ByteBuffer body = buffer(4).putInt(uint32(table.id));
+        body.flip();
+        ByteBuffer response = call(14, body);
+        if (response.remaining() != 8 || response.getLong(0) == 0) {
+            abort();
+            throw new Failure(9, "Malformed table deletion acknowledgement");
+        }
+        return response.getLong();
     }
 
     public synchronized Table create(String name, long periodCount, boolean days,

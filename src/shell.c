@@ -31,6 +31,11 @@ const shell_help ohlc_shell_commands[] = {
      "timezone.",
      "create bars_3m --period 3m --timezone Asia/Shanghai;\ncreate bars_5d --period 5d;"},
     {"tables", "tables", "List tables in stable ID order using bounded pages.", "tables;"},
+    {"drop", "drop TABLE",
+     "Permanently delete a table and its rows; write access required.\n"
+     "Existing queries finish on their snapshots before files are reclaimed.\n"
+     "The name may be reused, but the new table receives a different ID.",
+     "drop bars_3m;"},
     {"describe", "describe TABLE", "Show immutable table metadata and fixed field positions.",
      "describe bars_3m;"},
     {"tickers", "tickers [PREFIX]", "List exact ticker bytes, escaped for safe display.",
@@ -411,6 +416,26 @@ static ohlc_status create_table(shell* state, const shell_command* command) {
             state->tables[state->table_count++] = info;
         }
         fprintf(stderr, "Created commit_seq=%" PRIu64 "\n", info.created_seq);
+    }
+    return status;
+}
+
+static ohlc_status drop_table(shell* state, const shell_command* command) {
+    if (command->count != 2 || !text_word(&command->words[1])) {
+        return OHLC_INVALID;
+    }
+    /* Resolve the current name rather than trusting a cached table handle.
+     * The following mutation addresses that ID, so a concurrent replacement
+     * can never be deleted accidentally. */
+    ohlc_table_info table;
+    ohlc_status status = ohlc_client_table_open(state->client, command->words[1].text, &table);
+    if (status == OHLC_OK) {
+        uint64_t sequence;
+        status = ohlc_client_table_drop(state->client, table.id, &sequence);
+        state->table_count = 0;
+        if (status == OHLC_OK) {
+            fprintf(stderr, "Dropped %s commit_seq=%" PRIu64 "\n", table.name, sequence);
+        }
     }
     return status;
 }
@@ -974,6 +999,9 @@ static ohlc_status execute(shell* state, const shell_command* command) {
     }
     if (word_is(word, "create")) {
         return create_table(state, command);
+    }
+    if (word_is(word, "drop")) {
+        return drop_table(state, command);
     }
     if (word_is(word, "tables") && command->count == 1) {
         return list_metadata(state, true, NULL);

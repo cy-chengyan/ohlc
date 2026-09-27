@@ -101,6 +101,7 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     atomic_init(&db->wal_syncs, 0);
     atomic_init(&db->data_bytes, 0);
     atomic_init(&db->failed, false);
+    atomic_init(&db->reclaim_pending, false);
     atomic_init(&db->checkpoint_generation, 0);
     atomic_init(&db->checkpoint_sequences[0], 0);
     atomic_init(&db->checkpoint_sequences[1], 0);
@@ -143,6 +144,7 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     db->io_initialized = true;
     db->path = ohlc_alloc(&db->allocator, strlen(path) + 1);
     db->files = ohlc_alloc(&db->allocator, (size_t)options->max_tables * sizeof(*db->files));
+    db->file_capacity = options->max_tables;
     db->ticker_bucket_count = 1024;
     db->ticker_buckets =
         ohlc_alloc(&db->allocator, db->ticker_bucket_count * sizeof(*db->ticker_buckets));
@@ -242,9 +244,9 @@ ohlc_status ohlc_table_open(ohlc_db* db, const char* name, ohlc_table_info* outp
     }
     ohlc_root* root = ohlc_root_acquire(db);
     ohlc_status status = OHLC_NOT_FOUND;
-    for (uint64_t id = 1; id <= root->table_count; id++) {
+    for (uint64_t id = 1; id <= root->last_table_id; id++) {
         const ohlc_table* table = ohlc_root_table(root, (uint32_t)id);
-        if (strcmp(table->info.name, name) == 0) {
+        if (table != NULL && strcmp(table->info.name, name) == 0) {
             *output = table->info;
             status = OHLC_OK;
             break;
@@ -263,9 +265,12 @@ ohlc_status ohlc_table_list(ohlc_db* db, uint32_t start_id, ohlc_table_info* out
     ohlc_root* root = ohlc_root_acquire(db);
     *count = 0;
     *snapshot_seq = root->seq;
-    for (uint64_t id = start_id == 0 ? 1 : start_id; id <= root->table_count && *count < capacity;
+    for (uint64_t id = start_id == 0 ? 1 : start_id; id <= root->last_table_id && *count < capacity;
          id++) {
-        output[(*count)++] = ohlc_root_table(root, (uint32_t)id)->info;
+        const ohlc_table* table = ohlc_root_table(root, (uint32_t)id);
+        if (table != NULL) {
+            output[(*count)++] = table->info;
+        }
     }
     ohlc_root_release(db, root);
     return OHLC_OK;
@@ -293,18 +298,20 @@ ohlc_status ohlc_table_create(ohlc_db* db, const ohlc_table_definition* definiti
         goto cleanup;
     }
     ohlc_root* source = db->root;
-    for (uint64_t id = 1; id <= source->table_count; id++) {
-        if (strcmp(ohlc_root_table(source, (uint32_t)id)->info.name, definition->name) == 0) {
+    for (uint64_t id = 1; id <= source->last_table_id; id++) {
+        const ohlc_table* table = ohlc_root_table(source, (uint32_t)id);
+        if (table != NULL && strcmp(table->info.name, definition->name) == 0) {
             status = OHLC_ALREADY_EXISTS;
             goto cleanup;
         }
     }
-    if (source->seq == UINT64_MAX || source->table_count >= db->options.max_tables) {
+    if (source->seq == UINT64_MAX || source->last_table_id == UINT32_MAX ||
+        source->table_count >= db->options.max_tables) {
         status = OHLC_LIMIT;
         goto cleanup;
     }
     ohlc_table_info info = {0};
-    info.id = source->table_count + 1;
+    info.id = source->last_table_id + 1;
     info.created_seq = source->seq + 1;
     info.period_unit = definition->period_unit;
     info.period_count = definition->period_count;
@@ -331,6 +338,62 @@ ohlc_status ohlc_table_create(ohlc_db* db, const ohlc_table_definition* definiti
     }
 cleanup:
     ohlc_root_release(db, candidate);
+    pthread_mutex_unlock(&db->writer);
+    return status;
+}
+
+ohlc_status ohlc_prepare_drop(ohlc_db* db, const ohlc_root* source, uint32_t id,
+                              ohlc_root** candidate, ohlc_retired_table** retired) {
+    *candidate = NULL;
+    *retired = NULL;
+    if (ohlc_root_table(source, id) == NULL) {
+        return OHLC_NOT_FOUND;
+    }
+    if (source->seq == UINT64_MAX) {
+        return OHLC_LIMIT;
+    }
+    ohlc_root* root = ohlc_root_copy(db, source);
+    ohlc_retired_table* entry = ohlc_alloc(&db->allocator, sizeof(*entry));
+    ohlc_status status = root == NULL || entry == NULL ? OHLC_LIMIT : OHLC_OK;
+    if (status == OHLC_OK) {
+        status = ohlc_root_drop_table(db, root, id);
+    }
+    if (status != OHLC_OK) {
+        ohlc_root_release(db, root);
+        ohlc_free(&db->allocator, entry);
+        return status;
+    }
+    root->seq++;
+    entry->id = id;
+    entry->sequence = root->seq;
+    *candidate = root;
+    *retired = entry;
+    return OHLC_OK;
+}
+
+ohlc_status ohlc_table_drop(ohlc_db* db, uint32_t table_id, uint64_t* commit_seq) {
+    if (db == NULL || commit_seq == NULL || table_id == 0) {
+        return OHLC_INVALID;
+    }
+    pthread_mutex_lock(&db->writer);
+    ohlc_root* candidate = NULL;
+    ohlc_retired_table* retired = NULL;
+    ohlc_status status =
+        db->failed ? OHLC_IO : ohlc_prepare_drop(db, db->root, table_id, &candidate, &retired);
+    if (status == OHLC_OK) {
+        status = ohlc_wal_append(db, 4, table_id, 1, candidate->seq, (const uint8_t*)"", 0);
+    }
+    if (status == OHLC_OK) {
+        *commit_seq = candidate->seq;
+        ohlc_root_publish(db, candidate);
+        candidate = NULL;
+        retired->next = db->retired_tables;
+        db->retired_tables = retired;
+        atomic_store(&db->reclaim_pending, true);
+        retired = NULL;
+    }
+    ohlc_root_release(db, candidate);
+    ohlc_free(&db->allocator, retired);
     pthread_mutex_unlock(&db->writer);
     return status;
 }

@@ -123,6 +123,11 @@ void ohlc_get_stats(ohlc_db* db, ohlc_stats* output);
 
 ohlc_status ohlc_table_create(ohlc_db* db, const ohlc_table_definition* definition,
                               ohlc_table_info* output);
+/* Permanently remove a table by its stable ID. Success means durable deletion;
+ * existing cursors keep their snapshots. Files are reclaimed after both
+ * checkpoints cover the deletion and outstanding cursors have closed.
+ * IDs are never reused. The output sequence is unchanged on failure. */
+ohlc_status ohlc_table_drop(ohlc_db* db, uint32_t table_id, uint64_t* commit_seq);
 ohlc_status ohlc_table_open(ohlc_db* db, const char* name, ohlc_table_info* output);
 ohlc_status ohlc_table_get(ohlc_db* db, uint32_t id, ohlc_table_info* output);
 ohlc_status ohlc_table_list(ohlc_db* db, uint32_t start_id, ohlc_table_info* output,

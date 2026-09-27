@@ -187,7 +187,7 @@ static ohlc_status start_request(ohlc_client* client, uint16_t opcode, const voi
 
 static ohlc_status call(ohlc_client* client, uint16_t opcode, const void* body, size_t size,
                         ohlc_bytes* response) {
-    bool mutation = opcode == 7 || opcode == 8 || opcode == 9 || opcode == 13;
+    bool mutation = opcode == 7 || opcode == 8 || opcode == 9 || opcode == 13 || opcode == 14;
     uint64_t previous = client->request;
     ohlc_status status = start_request(client, opcode, body, size);
     ohlc_frame frame;
@@ -279,7 +279,7 @@ void ohlc_client_info(const ohlc_client* client, ohlc_connection_info* output) {
 
 ohlc_status ohlc_client_call(ohlc_client* client, uint16_t opcode, const void* body, size_t size,
                              ohlc_bytes* response) {
-    if (client == NULL || response == NULL || opcode < 2 || opcode > 13 || opcode == 5 ||
+    if (client == NULL || response == NULL || opcode < 2 || opcode > 14 || opcode == 5 ||
         opcode == 6) {
         return OHLC_INVALID;
     }
@@ -399,6 +399,23 @@ ohlc_status ohlc_client_table_create(ohlc_client* client, const ohlc_table_defin
         info.id = ohlc_get_u32(response.data);
         info.created_seq = ohlc_get_u64((const uint8_t*)response.data + 4);
         *output = info;
+    }
+    return status;
+}
+
+ohlc_status ohlc_client_table_drop(ohlc_client* client, uint32_t table_id, uint64_t* sequence) {
+    if (table_id == 0 || sequence == NULL) {
+        return OHLC_INVALID;
+    }
+    uint8_t body[4];
+    ohlc_put_u32(body, table_id);
+    ohlc_bytes response;
+    ohlc_status status = ohlc_client_call(client, 14, body, sizeof(body), &response);
+    if (status == OHLC_OK) {
+        if (response.size != 8 || ohlc_get_u64(response.data) == 0) {
+            return fail_connection(client, OHLC_OUTCOME_UNKNOWN);
+        }
+        *sequence = ohlc_get_u64(response.data);
     }
     return status;
 }

@@ -601,7 +601,18 @@ ohlc_root* ohlc_root_copy(ohlc_db* db, const ohlc_root* source) {
     root->seq = source->seq;
     root->ticker_count = source->ticker_count;
     root->table_count = source->table_count;
-    for (size_t i = 0; i < root->page_count; i++) {
+    root->last_table_id = source->last_table_id;
+    if (root->page_count < source->page_count) {
+        ohlc_table_page** pages = ohlc_alloc(&db->allocator, source->page_count * sizeof(*pages));
+        if (pages == NULL) {
+            ohlc_root_release(db, root);
+            return NULL;
+        }
+        ohlc_free(&db->allocator, root->pages);
+        root->pages = pages;
+        root->page_count = source->page_count;
+    }
+    for (size_t i = 0; i < source->page_count; i++) {
         root->pages[i] = source->pages[i];
         if (root->pages[i] != NULL) {
             atomic_fetch_add_explicit(&root->pages[i]->refs, 1, memory_order_relaxed);
@@ -637,7 +648,7 @@ void ohlc_root_publish(ohlc_db* db, ohlc_root* root) {
 }
 
 const ohlc_table* ohlc_root_table(const ohlc_root* root, uint32_t id) {
-    if (id == 0 || id > root->table_count) {
+    if (id == 0 || id > root->last_table_id || (id - 1u) / 256u >= root->page_count) {
         return NULL;
     }
     uint32_t slot = id - 1;
@@ -648,6 +659,17 @@ const ohlc_table* ohlc_root_table(const ohlc_root* root, uint32_t id) {
 static ohlc_status root_table_slot(ohlc_db* db, ohlc_root* root, uint32_t id,
                                    ohlc_table*** output) {
     uint32_t slot = id - 1;
+    size_t needed = (size_t)(slot / 256u) + 1;
+    if (needed > root->page_count) {
+        ohlc_table_page** pages = ohlc_alloc(&db->allocator, needed * sizeof(*pages));
+        if (pages == NULL) {
+            return OHLC_LIMIT;
+        }
+        memcpy(pages, root->pages, root->page_count * sizeof(*pages));
+        ohlc_free(&db->allocator, root->pages);
+        root->pages = pages;
+        root->page_count = needed;
+    }
     ohlc_table_page* page = root->pages[slot / 256u];
     if (page == NULL || !unique_reference(&page->refs)) {
         ohlc_table_page* copy = ohlc_alloc(&db->allocator, sizeof(*copy));
@@ -729,8 +751,7 @@ ohlc_status ohlc_root_set_table(ohlc_db* db, ohlc_root* root, uint32_t id, ohlc_
 }
 
 ohlc_status ohlc_root_add_table(ohlc_db* db, ohlc_root* root, const ohlc_table_info* info) {
-    if (root->table_count >= db->options.max_tables || root->table_count == UINT32_MAX ||
-        info->id != root->table_count + 1) {
+    if (root->table_count >= db->options.max_tables || info->id <= root->last_table_id) {
         return OHLC_LIMIT;
     }
     ohlc_table** slot = NULL;
@@ -747,5 +768,20 @@ ohlc_status ohlc_root_add_table(ohlc_db* db, ohlc_root* root, const ohlc_table_i
     table->info = *info;
     *slot = table;
     root->table_count++;
+    root->last_table_id = info->id;
     return OHLC_OK;
+}
+
+ohlc_status ohlc_root_drop_table(ohlc_db* db, ohlc_root* root, uint32_t id) {
+    if (ohlc_root_table(root, id) == NULL) {
+        return OHLC_NOT_FOUND;
+    }
+    ohlc_table** slot = NULL;
+    ohlc_status status = root_table_slot(db, root, id, &slot);
+    if (status == OHLC_OK) {
+        ohlc_table_release(&db->allocator, *slot);
+        *slot = NULL;
+        root->table_count--;
+    }
+    return status;
 }

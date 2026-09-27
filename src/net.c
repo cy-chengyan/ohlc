@@ -95,6 +95,23 @@ ohlc_status ohlc_net_prepare(int fd) {
     }
     int enabled = 1;
     (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled));
+    /* Keep idle TCP sessions usable while detecting unreachable peers.
+     * TCP-specific options are intentionally inapplicable to Unix sockets. */
+    (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &enabled, sizeof(enabled));
+    int idle_seconds = 60;
+    int interval_seconds = 15;
+    int probes = 4;
+#if defined(TCP_KEEPIDLE)
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle_seconds, sizeof(idle_seconds));
+#elif defined(TCP_KEEPALIVE)
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle_seconds, sizeof(idle_seconds));
+#endif
+#ifdef TCP_KEEPINTVL
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval_seconds, sizeof(interval_seconds));
+#endif
+#ifdef TCP_KEEPCNT
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &probes, sizeof(probes));
+#endif
 #ifdef SO_NOSIGPIPE
     if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0) {
         return OHLC_IO;
