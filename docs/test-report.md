@@ -905,3 +905,33 @@ clang-format 21.1.8、Python 语法及 diff 空白检查通过，没有重跑无
 [结果元数据](../build/acceptance/rpm-periods-20260928/validation.json)。
 EL8 为 UBI 用户空间并共享 RHEL 9 内核，不代表独立 EL8 内核验证；
 本次未作性能复测、ARM64 或真实断电测试，产物仍为未签名的本地 beta RPM。
+
+## insert 帮助示例补全（2026-09-28）
+
+补齐 `help insert;` 的秒、分钟、日、月、年五类示例。macOS 的 `ohlc_shell` 目标构建通过；
+实际帮助输出的五条命令均保留完整日期时间参数和七个整数行情字段，80 列排版检查通过。
+clang-format 21.1.8 和 diff 空白检查通过；仅修改帮助文本，没有重跑数据库功能测试。
+证据：[实际输出](../build/acceptance/insert-help-20260928/help-insert.txt)、
+[检查结果](../build/acceptance/insert-help-20260928/validation.txt)。
+
+随后基于 `87478ea76fcfd6baa971e39edf0fac5a54847375` 加本次帮助修复及 Release 7 构建源码快照，
+归档 SHA-256 为 `f1943dd226a3f4207b30b7d380f7d6927ea96e7404d9cd3a7175bff4d860ca03`。
+EL8 / EL9 的 `0.1.0~beta.1-7` RPM 均构建成功，打包规范要求的 11 项检查全部通过，
+分别耗时 9.44 / 9.40 秒；两套产物均通过 RPM 摘要与 SHA-256 清单验证。
+
+RHEL 9.4 测试机的 8 个功能包已由 Release 6 升至 Release 7，数据库和配置均已备份。
+安装后的 `/usr/bin/ohlc` 实际输出包含五种周期示例，日期时间参数、七字段和 80 列排版检查通过。
+本次实机验证只读取既有行情：升级前后的 UUID、提交序号、表元数据、证券编号及行摘要一致，
+仍为 `a_stock_1d`、1 个证券、1 条行情，提交序号保持 37。配置文件校验不变，服务 active/running
+且 enabled，开发机局域网 PING / STATS / TABLES 检查通过。
+
+EL8/EL9 产物位于 `/home/ohlc/rpm-env/artifacts/el8/` 和 `el9/` 下的
+`20260928T034648Z-snapshot-f1943dd226a3/`，两套 `latest` 链接已更新。
+部署记录和备份位于 `/home/ohlc/rpm-env/deployments/20260928T034648Z-insert-help-release7/`；
+重建同一快照使用 `/home/ohlc/rpm-env/bin/build-insert-help-f1943dd226a3 all`。
+
+证据：[构建日志](../build/acceptance/rpm-insert-help-20260928/build-el8-el9.log)、
+[安装日志](../build/acceptance/rpm-insert-help-20260928/install.log)、
+[已安装帮助输出](../build/acceptance/rpm-insert-help-20260928/help-insert.txt)、
+[验收元数据](../build/acceptance/rpm-insert-help-20260928/validation.json)。
+EL8 使用共享 RHEL 9 内核的 UBI 用户空间；本次未作性能、ARM64 或真实断电复测，RPM 未签名。

@@ -149,7 +149,20 @@ const shell_help ohlc_shell_commands[] = {
                     "atomically; write access "
                     "required.",
      .example =
-         "insert bars_3m AAPL \"20260901 09:30:00\" 10000 10100 9950 10080 1200 12100000 1000000;"},
+         "# Second bars (5s)\n"
+         "insert bars_5s AAPL \"20260901 09:30:17\" 10000 10100 9950 10080 1200 12100000 1000000;\n"
+         "\n"
+         "# Minute bars (3m)\n"
+         "insert bars_3m AAPL \"20260901 09:30:00\" 10000 10100 9950 10080 1200 12100000 1000000;\n"
+         "\n"
+         "# Daily bars (1d)\n"
+         "insert bars_1d AAPL \"20260901\" 10000 10100 9950 10080 1200 12100000 1000000;\n"
+         "\n"
+         "# Monthly bars (1mo); caller-supplied date\n"
+         "insert bars_1mo AAPL \"20260917\" 10000 10100 9950 10080 1200 12100000 1000000;\n"
+         "\n"
+         "# Yearly bars (1y); caller-supplied date\n"
+         "insert bars_1y AAPL \"20260917\" 10000 10100 9950 10080 1200 12100000 1000000;"},
     {.name = "put",
      .group = SHELL_HELP_WRITES,
      .summary = "Alias of insert.",
