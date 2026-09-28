@@ -33,6 +33,7 @@ add_library(ohlc SHARED
     src/index.c
     src/storage.c
     src/io.c
+    src/dictionary.c
     src/engine.c
     src/recovery.c
 )

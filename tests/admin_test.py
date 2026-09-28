@@ -30,7 +30,6 @@ def main():
         restored = root / "restored"
         row = (-2147483648, 2147483647, -1, 0, 4294967295, 18446744073709551615, 4294967295)
         with Database(source, create=True, library=library) as db:
-            db.register("AAPL")
             minute = db.create("minute", timezone="UTC")
             day = db.create("day", period="5d")
             minute.insert("AAPL", "20260901 09:30:00", row)

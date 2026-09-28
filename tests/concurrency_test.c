@@ -127,7 +127,8 @@ int main(void) {
         ohlc_bytes ticker = {name, (size_t)name_length};
         uint32_t code = 0;
         uint64_t sequence = 0;
-        if (!check_status(&context, ohlc_register(context.db, ticker, &code, &sequence))) {
+        if (!check_status(&context,
+                          ohlc_register(context.db, context.table, ticker, &code, &sequence))) {
             return 1;
         }
         ohlc_row initial = {0};

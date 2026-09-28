@@ -557,6 +557,7 @@ void ohlc_table_release(ohlc_allocator* a, ohlc_table* table) {
     if (table == NULL || !last_reference(&table->refs)) {
         return;
     }
+    ohlc_dictionary_release(a, table->dictionary);
     ohlc_time_release(a, table->times);
     ohlc_band_node_release(a, table->bands);
     for (size_t i = 0; i < table->time_page_count; i++) {
@@ -729,6 +730,8 @@ ohlc_status ohlc_root_edit_table(ohlc_db* db, ohlc_root* root, uint32_t id, ohlc
             atomic_fetch_add_explicit(&copy->time_pages[i]->refs, 1, memory_order_relaxed);
         }
     }
+    copy->dictionary = source->dictionary;
+    ohlc_dictionary_retain(copy->dictionary);
     copy->times = source->times;
     copy->bands = source->bands;
     ohlc_time_retain(copy->times);
@@ -779,6 +782,7 @@ ohlc_status ohlc_root_drop_table(ohlc_db* db, ohlc_root* root, uint32_t id) {
     ohlc_table** slot = NULL;
     ohlc_status status = root_table_slot(db, root, id, &slot);
     if (status == OHLC_OK) {
+        root->ticker_count -= ohlc_dictionary_count(*slot);
         ohlc_table_release(&db->allocator, *slot);
         *slot = NULL;
         root->table_count--;

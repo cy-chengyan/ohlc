@@ -135,14 +135,15 @@ def sparse_tables(binaries, root):
     generator = random.Random(20260926)
     with Server(binaries, root) as server:
         with server.connect() as client:
-            for index in range(128):
-                ticker = f"SPARSE-{index:03d}"
-                code, _ = client.register(ticker)
-                if index % 2 == 0:
-                    symbols[code] = ticker
             for name, period in (("minute", "1m"), ("three_minute", "3m"),
                                  ("day", "1d"), ("five_day", "5d")):
                 table = client.create(name, period=period, timezone="UTC" if "m" in period else "")
+                for index in range(128):
+                    ticker = f"SPARSE-{index:03d}"
+                    code, _ = table.register(ticker)
+                    if index % 2 == 0:
+                        symbols[code] = ticker
+
                 base = table.time_key("20260901 09:30:00" if "m" in period else "20260901")
                 step = int(period[:-1])
                 keys = [base + index * step for index in range(257)]
@@ -198,7 +199,7 @@ def resources(binaries, root):
     with Server(binaries, root) as server:
         with server.connect() as client:
             table = client.create("slow", period="1m", timezone="UTC")
-            code, _ = client.register("SLOW")
+            code, _ = client.register(1, "SLOW")
             write_rows(table, [(code, key, values(code, key)) for key in range(count)])
     with Server(binaries, root, limits=True) as server:
         peers = []
@@ -287,7 +288,7 @@ def multi_writer(binaries, root):
             table = client.create("writers", period="1m", timezone="UTC")
             for index in range(64):
                 ticker = f"WRITER-{index:02d}"
-                code, _ = client.register(ticker)
+                code, _ = client.register(1, ticker)
                 assert code == index
                 symbols[code] = ticker
                 for key in range(100):
@@ -341,7 +342,7 @@ def crash_boundary(binaries, root, phase):
             client.create("durability", period="1m", timezone="UTC")
             for index in range(32):
                 ticker = f"CRASH-{index:02d}"
-                code, _ = client.register(ticker)
+                code, _ = client.register(1, ticker)
                 symbols[code] = ticker
     arm = root / "armed"
     environment = dict(os.environ, LD_PRELOAD=str(binaries / "fault_inject.so"),
@@ -373,7 +374,7 @@ def crash_boundary(binaries, root, phase):
     with Server(binaries, root) as recovered:
         recovery_ns = time.monotonic_ns() - started
         with recovered.connect() as client:
-            assert dict(client.dictionary()) == {code: ticker.encode() for code, ticker in symbols.items()}
+            assert dict(client.dictionary(1)) == {code: ticker.encode() for code, ticker in symbols.items()}
             checked, queries = verify_oracle(client, {"durability": oracle}, symbols)
     return dict(boundary=phase, acknowledged=acknowledged, sequence=sequence,
                 recovered_rows=len(oracle), checked_rows=checked, queries=queries,

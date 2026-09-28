@@ -248,7 +248,7 @@ public final class Ohlc implements AutoCloseable {
         chunk = 0;
         arm(deadlineMs);
         ByteBuffer header = buffer(32);
-        header.put(new byte[] {'O', 'H', 'L', 'C'}).putShort((short) 3).putShort((short) opcode)
+        header.put(new byte[] {'O', 'H', 'L', 'C'}).putShort((short) 4).putShort((short) opcode)
               .putInt(0).putInt(body.remaining()).putLong(request).putInt(0).putInt(0);
         output.write(header.array());
         ByteBuffer source = body.duplicate();
@@ -271,7 +271,7 @@ public final class Ohlc implements AutoCloseable {
         byte[] header = new byte[32];
         input.readFully(header);
         ByteBuffer fields = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN);
-        if (fields.getInt() != 0x434c484f || fields.getShort() != 3 ||
+        if (fields.getInt() != 0x434c484f || fields.getShort() != 4 ||
                 Short.toUnsignedInt(fields.getShort()) != opcode) {
             throw corrupt("Invalid response header");
         }
@@ -293,7 +293,7 @@ public final class Ohlc implements AutoCloseable {
 
     private synchronized ByteBuffer call(int operation, ByteBuffer body) throws IOException {
         boolean mutation = operation == 7 || operation == 8 || operation == 9
-            || operation == 13 || operation == 14;
+            || operation == 13 || operation == 14 || operation == 15;
         long previous = request;
         Frame frame;
         try {
@@ -360,22 +360,49 @@ public final class Ohlc implements AutoCloseable {
         }
     }
 
-    public synchronized long resolve(byte[] ticker) throws IOException {
+    /** Pack batch-local name indexes and rows without changing the input position. */
+    public static ByteBuffer namedBatch(byte[][] tickers, ByteBuffer rows) {
+        int count = rows.remaining() / WRITE_BYTES;
+        if (rows.remaining() == 0 || rows.remaining() % WRITE_BYTES != 0 ||
+                count > 250000 || tickers.length == 0 || tickers.length > count) {
+            throw new IllegalArgumentException("Invalid named batch length");
+        }
+        long size = 8L + rows.remaining();
+        for (byte[] name : tickers) {
+            ticker(name);
+            size += 4L + name.length;
+        }
+        if (size > 16L * 1024 * 1024 - 100) {
+            throw new IllegalArgumentException("Named batch exceeds frame limit");
+        }
+        ByteBuffer body = buffer((int) size);
+        body.putInt(count).putInt(tickers.length);
+        for (byte[] name : tickers) {
+            body.putInt(name.length).put(name);
+        }
+        return body.put(rows.duplicate()).flip();
+    }
+
+    public synchronized long resolve(long table, byte[] ticker) throws IOException {
         ticker(ticker);
-        ByteBuffer response = call(3, string(ticker));
+        ByteBuffer body = buffer(8 + ticker.length).putInt(uint32(table))
+            .put(string(ticker)).flip();
+        ByteBuffer response = call(3, body);
         exact(response, 4);
         return u32(response);
     }
 
-    public long resolve(String ticker) throws IOException {
-        return resolve(ticker.getBytes(StandardCharsets.UTF_8));
+    public long resolve(long table, String ticker) throws IOException {
+        return resolve(table, ticker.getBytes(StandardCharsets.UTF_8));
     }
 
     public record Registration(long code, long commitSequence) {}
 
-    public synchronized Registration register(byte[] ticker) throws IOException {
+    public synchronized Registration register(long table, byte[] ticker) throws IOException {
         ticker(ticker);
-        ByteBuffer response = call(7, string(ticker));
+        ByteBuffer body = buffer(8 + ticker.length).putInt(uint32(table))
+            .put(string(ticker)).flip();
+        ByteBuffer response = call(7, body);
         if (response.remaining() != 12) {
             abort();
             throw new Failure(9, "Malformed registration acknowledgement");
@@ -383,8 +410,8 @@ public final class Ohlc implements AutoCloseable {
         return new Registration(u32(response), response.getLong());
     }
 
-    public Registration register(String ticker) throws IOException {
-        return register(ticker.getBytes(StandardCharsets.UTF_8));
+    public Registration register(long table, String ticker) throws IOException {
+        return register(table, ticker.getBytes(StandardCharsets.UTF_8));
     }
 
     public synchronized Table table(String name) throws IOException {
@@ -461,9 +488,11 @@ public final class Ohlc implements AutoCloseable {
         }
     }
 
-    public synchronized List<Ticker> dictionary(long start, int limit) throws IOException {
+    public synchronized List<Ticker> dictionary(long table, long start, int limit) throws IOException {
         pageLimit(limit);
-        ByteBuffer response = call(4, buffer(8).putInt(uint32(start)).putInt(limit).flip());
+        ByteBuffer body = buffer(12).putInt(uint32(table)).putInt(uint32(start))
+            .putInt(limit).flip();
+        ByteBuffer response = call(4, body);
         if (response.remaining() < 12) {
             throw corrupt("Truncated dictionary page");
         }
@@ -613,6 +642,35 @@ public final class Ohlc implements AutoCloseable {
                                  time.getMonthValue(), time.getDayOfMonth(), time.getHour(), time.getMinute());
         }
 
+        public long resolve(String ticker) throws IOException {
+            return Ohlc.this.resolve(id, ticker);
+        }
+
+        public Registration register(String ticker) throws IOException {
+            return Ohlc.this.register(id, ticker);
+        }
+
+        public List<Ticker> dictionary(long start, int limit) throws IOException {
+            return Ohlc.this.dictionary(id, start, limit);
+        }
+
+        /** Create missing names and commit their indexed rows in one transaction. */
+        public long write(byte[][] tickers, ByteBuffer rows) throws IOException {
+            if (rows.remaining() / WRITE_BYTES > maxRows) {
+                throw new IllegalArgumentException("Batch exceeds negotiated row limit");
+            }
+            ByteBuffer batch = namedBatch(tickers, rows);
+            ByteBuffer body = buffer(4 + batch.remaining()).putInt(uint32(id)).put(batch).flip();
+            synchronized (Ohlc.this) {
+                ByteBuffer response = call(15, body);
+                if (response.remaining() != 8) {
+                    abort();
+                    throw new Failure(9, "Malformed named write acknowledgement");
+                }
+                return response.getLong();
+            }
+        }
+
         /** Commit one encoded batch; the supplied buffer position is unchanged. */
         public long write(ByteBuffer rows) throws IOException {
             if (rows.remaining() == 0 || rows.remaining() % WRITE_BYTES != 0 ||
@@ -634,8 +692,8 @@ public final class Ohlc implements AutoCloseable {
         public long insert(String ticker, String time, int open, int high, int low, int close,
                            long volume, long amountBits, long factor) throws IOException {
             ByteBuffer row = buffer(WRITE_BYTES);
-            putWrite(row, resolve(ticker), timeKey(time), open, high, low, close, volume, amountBits, factor);
-            return write(row.flip());
+            putWrite(row, 0, timeKey(time), open, high, low, close, volume, amountBits, factor);
+            return write(new byte[][] {ticker.getBytes(StandardCharsets.UTF_8)}, row.flip());
         }
 
         public Query series(String ticker, String start, String end) throws IOException {

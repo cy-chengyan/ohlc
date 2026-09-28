@@ -20,7 +20,7 @@
   <text x="118.00" y="545.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">真实时间</text>
   <text x="118.00" y="583.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">20260901 09:36:00</text>
   <rect x="440" y="337" width="328" height="121" rx="16" fill="#EAF2FF" stroke="#A8C6F1" stroke-width="1.5" />
-  <text x="462.00" y="379.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">证券字典</text>
+  <text x="462.00" y="379.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">表级证券字典</text>
   <text x="462.00" y="424.30" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">AAPL → code 37</text>
   <rect x="440" y="504" width="328" height="121" rx="16" fill="#EAF2FF" stroke="#A8C6F1" stroke-width="1.5" />
   <text x="462.00" y="546.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="600" dominant-baseline="alphabetic" fill="#2563C8">时间映射 + band 目录</text>
@@ -100,8 +100,8 @@
   <text x="1412.00" y="1030.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="18" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">存在位 / 代次 / CRC / 保留</text>
   <rect x="1390" y="1060" width="418" height="113" rx="16" fill="#F4F7FB" stroke="#D8E2ED" stroke-width="1.5" />
   <text x="1412.00" y="1104.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#008A82">index-*.dat / catalog-*.dat</text>
-  <text x="1412.00" y="1148.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">表索引 / 全库字典与表目录</text>
-  <text x="66.00" y="1690" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0.1.0-beta.1 · 磁盘格式 4 · 网络协议 3  |  表与卷参与隔离；补录不改变已有 time_code。</text>
+  <text x="1412.00" y="1148.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">表字典与索引 / 全库表目录</text>
+  <text x="66.00" y="1690" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0.1.0-beta.1 · 磁盘格式 5 · 网络协议 4  |  表与卷参与隔离；补录不改变已有 time_code。</text>
   <rect x="64" y="1246" width="1792" height="376" rx="14" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
   <text x="100" y="1300" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" fill="#15263E">3   写入与恢复：WAL 保护热块，检查点发布持久入口</text>
   <rect x="100" y="1330" width="384" height="136" rx="14" fill="#EAF2FF" stroke="#D8E2ED" stroke-width="1.5" />

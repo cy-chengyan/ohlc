@@ -30,7 +30,7 @@ public final class JavaTransportTest {
         if (arguments[0].equals("unknown")) {
             try (Ohlc client = Ohlc.connect("127.0.0.1", port, null, new byte[0], 5000)) {
                 try {
-                    client.register("MAY_HAVE_COMMITTED");
+                    client.register(1, "MAY_HAVE_COMMITTED");
                     throw new AssertionError("Expected unknown mutation outcome");
                 } catch (Ohlc.Failure error) {
                     assert error.status == 9;

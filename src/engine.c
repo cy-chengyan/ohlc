@@ -37,19 +37,6 @@ static void database_destroy(ohlc_db* db) {
     }
     ohlc_root_release(db, db->root);
     ohlc_root_release(db, db->checkpoint_root);
-    for (size_t i = 0; db->ticker_buckets != NULL && i < db->ticker_bucket_count; i++) {
-        ohlc_ticker_entry* entry = db->ticker_buckets[i];
-        while (entry != NULL) {
-            ohlc_ticker_entry* next = entry->next;
-            ohlc_free(&db->allocator, entry);
-            entry = next;
-        }
-    }
-    for (size_t i = 0; i < db->ticker_page_count; i++) {
-        ohlc_free(&db->allocator, db->ticker_pages[i]);
-    }
-    ohlc_free(&db->allocator, db->ticker_pages);
-    ohlc_free(&db->allocator, db->ticker_buckets);
     for (size_t i = 0; i < 16; i++) {
         ohlc_free(&db->allocator, db->cache[i].entries);
         pthread_cond_destroy(&db->cache[i].changed);
@@ -60,7 +47,6 @@ static void database_destroy(ohlc_db* db) {
     pthread_mutex_destroy(&db->writer);
     pthread_mutex_destroy(&db->checkpoint_mutex);
     pthread_mutex_destroy(&db->root_mutex);
-    pthread_mutex_destroy(&db->dictionary_mutex);
     pthread_mutex_destroy(&db->storage_mutex);
     free(db);
 }
@@ -110,12 +96,12 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     db->directory_fd = -1;
     db->catalog_fd = -1;
     db->wal_fd = -1;
-    pthread_mutex_t* locks[21] = {&db->writer, &db->root_mutex, &db->dictionary_mutex,
-                                  &db->storage_mutex, &db->checkpoint_mutex};
+    pthread_mutex_t* locks[20] = {&db->writer, &db->root_mutex, &db->storage_mutex,
+                                  &db->checkpoint_mutex};
     for (size_t i = 0; i < 16; i++) {
-        locks[i + 5] = &db->cache[i].mutex;
+        locks[i + 4] = &db->cache[i].mutex;
     }
-    for (size_t i = 0; i < 21; i++) {
+    for (size_t i = 0; i < 20; i++) {
         if (pthread_mutex_init(locks[i], NULL) != 0) {
             for (size_t j = 0; j < i; j++) {
                 pthread_mutex_destroy(locks[j]);
@@ -129,7 +115,7 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
             for (size_t j = 0; j < i; j++) {
                 pthread_cond_destroy(&db->cache[j].changed);
             }
-            for (size_t j = 0; j < 21; j++) {
+            for (size_t j = 0; j < 20; j++) {
                 pthread_mutex_destroy(locks[j]);
             }
             free(db);
@@ -145,11 +131,8 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     db->path = ohlc_alloc(&db->allocator, strlen(path) + 1);
     db->files = ohlc_alloc(&db->allocator, (size_t)options->max_tables * sizeof(*db->files));
     db->file_capacity = options->max_tables;
-    db->ticker_bucket_count = 1024;
-    db->ticker_buckets =
-        ohlc_alloc(&db->allocator, db->ticker_bucket_count * sizeof(*db->ticker_buckets));
     db->root = ohlc_root_new(db);
-    if (db->path == NULL || db->files == NULL || db->ticker_buckets == NULL || db->root == NULL) {
+    if (db->path == NULL || db->files == NULL || db->root == NULL) {
         database_destroy(db);
         return OHLC_LIMIT;
     }
@@ -398,181 +381,6 @@ ohlc_status ohlc_table_drop(ohlc_db* db, uint32_t table_id, uint64_t* commit_seq
     return status;
 }
 
-static uint64_t ticker_hash(ohlc_bytes ticker) {
-    const uint8_t* bytes = ticker.data;
-    uint64_t value = UINT64_C(14695981039346656037);
-    for (size_t i = 0; i < ticker.size; i++) {
-        value = (value ^ bytes[i]) * UINT64_C(1099511628211);
-    }
-    value ^= value >> 32;
-    return value;
-}
-
-static ohlc_ticker_entry* ticker_find(ohlc_db* db, ohlc_bytes ticker, uint64_t hash) {
-    ohlc_ticker_entry* entry = db->ticker_buckets[hash & (db->ticker_bucket_count - 1)];
-    while (entry != NULL) {
-        if (entry->hash == hash && entry->length == ticker.size &&
-            memcmp(entry->bytes, ticker.data, ticker.size) == 0) {
-            return entry;
-        }
-        entry = entry->next;
-    }
-    return NULL;
-}
-
-ohlc_status ohlc_resolve(ohlc_db* db, ohlc_bytes ticker, uint32_t* code) {
-    if (db == NULL || code == NULL || ticker.data == NULL || ticker.size == 0 ||
-        ticker.size > 4096) {
-        return OHLC_INVALID;
-    }
-    uint64_t hash = ticker_hash(ticker);
-    pthread_mutex_lock(&db->dictionary_mutex);
-    ohlc_ticker_entry* entry = ticker_find(db, ticker, hash);
-    if (entry != NULL) {
-        *code = entry->code;
-    }
-    pthread_mutex_unlock(&db->dictionary_mutex);
-    return entry == NULL ? OHLC_NOT_FOUND : OHLC_OK;
-}
-
-ohlc_status ohlc_ticker(ohlc_db* db, uint32_t code, ohlc_bytes* output) {
-    if (db == NULL || output == NULL) {
-        return OHLC_INVALID;
-    }
-    pthread_mutex_lock(&db->dictionary_mutex);
-    ohlc_status status = OHLC_NOT_FOUND;
-    if (code < db->dictionary_count) {
-        const ohlc_ticker_entry* entry = db->ticker_pages[code / 1024u][code % 1024u];
-        output->data = entry->bytes;
-        output->size = entry->length;
-        status = OHLC_OK;
-    }
-    pthread_mutex_unlock(&db->dictionary_mutex);
-    return status;
-}
-
-/* Called with the dictionary mutex held. Capacity growth is not publication. */
-ohlc_status ohlc_dictionary_prepare(ohlc_db* db, ohlc_bytes ticker, uint32_t code,
-                                    ohlc_ticker_entry** output) {
-    *output = NULL;
-    uint64_t hash = ticker_hash(ticker);
-    if (ticker.size == 0 || ticker.size > 4096 || code != db->dictionary_count ||
-        ticker_find(db, ticker, hash) != NULL) {
-        return OHLC_CORRUPT;
-    }
-    if (db->dictionary_count >= db->ticker_bucket_count * 2u) {
-        size_t count = db->ticker_bucket_count * 2;
-        ohlc_ticker_entry** buckets = ohlc_alloc(&db->allocator, count * sizeof(*buckets));
-        if (buckets == NULL) {
-            return OHLC_LIMIT;
-        }
-        for (size_t i = 0; i < db->ticker_bucket_count; i++) {
-            ohlc_ticker_entry* entry = db->ticker_buckets[i];
-            while (entry != NULL) {
-                ohlc_ticker_entry* next = entry->next;
-                size_t bucket = (size_t)(entry->hash & (count - 1));
-                entry->next = buckets[bucket];
-                buckets[bucket] = entry;
-                entry = next;
-            }
-        }
-        ohlc_free(&db->allocator, db->ticker_buckets);
-        db->ticker_buckets = buckets;
-        db->ticker_bucket_count = count;
-    }
-    size_t page = code / 1024u;
-    if (page == db->ticker_page_count) {
-        ohlc_ticker_entry*** pages = ohlc_alloc(&db->allocator, (page + 1) * sizeof(*pages));
-        ohlc_ticker_entry** entries = ohlc_alloc(&db->allocator, 1024u * sizeof(*entries));
-        if (pages == NULL || entries == NULL) {
-            ohlc_free(&db->allocator, pages);
-            ohlc_free(&db->allocator, entries);
-            return OHLC_LIMIT;
-        }
-        if (page != 0) {
-            memcpy(pages, db->ticker_pages, page * sizeof(*pages));
-        }
-        pages[page] = entries;
-        ohlc_free(&db->allocator, db->ticker_pages);
-        db->ticker_pages = pages;
-        db->ticker_page_count++;
-    }
-    ohlc_ticker_entry* entry = ohlc_alloc(&db->allocator, sizeof(*entry) + ticker.size);
-    if (entry == NULL) {
-        return OHLC_LIMIT;
-    }
-    entry->code = code;
-    entry->hash = hash;
-    entry->length = (uint32_t)ticker.size;
-    memcpy(entry->bytes, ticker.data, ticker.size);
-    *output = entry;
-    return OHLC_OK;
-}
-
-void ohlc_dictionary_publish(ohlc_db* db, ohlc_ticker_entry* entry) {
-    size_t bucket = (size_t)(entry->hash & (db->ticker_bucket_count - 1));
-    entry->next = db->ticker_buckets[bucket];
-    db->ticker_buckets[bucket] = entry;
-    db->ticker_pages[entry->code / 1024u][entry->code % 1024u] = entry;
-    db->dictionary_count++;
-}
-
-ohlc_status ohlc_register(ohlc_db* db, ohlc_bytes ticker, uint32_t* code, uint64_t* seq) {
-    if (db == NULL || code == NULL || seq == NULL || ticker.data == NULL || ticker.size == 0 ||
-        ticker.size > 4096) {
-        return OHLC_INVALID;
-    }
-    pthread_mutex_lock(&db->writer);
-    pthread_mutex_lock(&db->dictionary_mutex);
-    ohlc_status status = OHLC_OK;
-    ohlc_ticker_entry* prepared = NULL;
-    ohlc_root* candidate = NULL;
-    ohlc_ticker_entry* existing = ticker_find(db, ticker, ticker_hash(ticker));
-    if (existing != NULL) {
-        *code = existing->code;
-        *seq = db->root->seq;
-        goto cleanup;
-    }
-    if (db->failed) {
-        status = OHLC_IO;
-        goto cleanup;
-    }
-    if (db->dictionary_count > UINT32_MAX || db->root->seq == UINT64_MAX) {
-        status = OHLC_LIMIT;
-        goto cleanup;
-    }
-    candidate = ohlc_root_copy(db, db->root);
-    if (candidate == NULL) {
-        status = OHLC_LIMIT;
-        goto cleanup;
-    }
-    status = ohlc_dictionary_prepare(db, ticker, (uint32_t)db->dictionary_count, &prepared);
-    if (status != OHLC_OK) {
-        goto cleanup;
-    }
-    candidate->seq++;
-    candidate->ticker_count++;
-    uint8_t payload[4104];
-    ohlc_put_u32(payload, prepared->code);
-    ohlc_put_u32(payload + 4, prepared->length);
-    memcpy(payload + 8, ticker.data, ticker.size);
-    status = ohlc_wal_append(db, 1, 0, 1, candidate->seq, payload, ticker.size + 8);
-    if (status == OHLC_OK) {
-        *code = prepared->code;
-        *seq = candidate->seq;
-        ohlc_dictionary_publish(db, prepared);
-        prepared = NULL;
-        ohlc_root_publish(db, candidate);
-        candidate = NULL;
-    }
-cleanup:
-    ohlc_free(&db->allocator, prepared);
-    ohlc_root_release(db, candidate);
-    pthread_mutex_unlock(&db->dictionary_mutex);
-    pthread_mutex_unlock(&db->writer);
-    return status;
-}
-
 static int compare_prepared(const void* left, const void* right) {
     const ohlc_prepared_row* a = left;
     const ohlc_prepared_row* b = right;
@@ -686,7 +494,7 @@ static ohlc_status prepare_rectangle(ohlc_db* db, ohlc_root* candidate, uint32_t
                                      const uint8_t* rows, size_t count, size_t width) {
     uint32_t first_ticker = ohlc_get_u32(rows);
     uint64_t ticker_end = (uint64_t)first_ticker + width;
-    if (ticker_end > candidate->ticker_count) {
+    if (ticker_end > ohlc_dictionary_count(ohlc_root_table(candidate, table_id))) {
         return OHLC_NOT_FOUND;
     }
     size_t times = count / width;
@@ -750,7 +558,7 @@ static ohlc_status prepare_rectangle(ohlc_db* db, ohlc_root* candidate, uint32_t
 static ohlc_status prepare_cross(ohlc_db* db, ohlc_root* candidate, uint32_t table_id,
                                  const uint8_t* rows, size_t count) {
     uint32_t last_ticker = ohlc_get_u32(rows + (count - 1) * OHLC_WRITE_BYTES);
-    if (last_ticker >= candidate->ticker_count) {
+    if (last_ticker >= ohlc_dictionary_count(ohlc_root_table(candidate, table_id))) {
         return OHLC_NOT_FOUND;
     }
     ohlc_table* table = NULL;
@@ -831,7 +639,7 @@ ohlc_status ohlc_prepare_write(ohlc_db* db, const ohlc_root* source, uint32_t ta
     for (size_t i = 0; i < count; i++) {
         const uint8_t* row = rows + i * OHLC_WRITE_BYTES;
         uint32_t ticker = ohlc_get_u32(row);
-        if (ticker >= source->ticker_count) {
+        if (ticker >= ohlc_dictionary_count(ohlc_root_table(source, table_id))) {
             status = OHLC_NOT_FOUND;
             goto cleanup;
         }
@@ -924,12 +732,17 @@ static void commit_group(ohlc_db* db, ohlc_write_request** requests, size_t coun
         ohlc_root* next = NULL;
         uint8_t* frame = NULL;
         size_t length = 0;
-        request->status =
-            ohlc_prepare_write(db, base, request->table, request->rows, request->count, &next);
-        if (request->status == OHLC_OK) {
+        if (request->named) {
+            request->status = ohlc_prepare_named(db, base, request->table, request->rows,
+                                                 request->size, request->count, &next);
+        } else {
             request->status =
-                ohlc_wal_encode(db, 2, request->table, (uint32_t)request->count, next->seq,
-                                request->rows, request->count * OHLC_WRITE_BYTES, &frame, &length);
+                ohlc_prepare_write(db, base, request->table, request->rows, request->count, &next);
+        }
+        if (request->status == OHLC_OK) {
+            request->status = ohlc_wal_encode(db, request->named ? 5 : 2, request->table,
+                                              (uint32_t)request->count, next->seq, request->rows,
+                                              request->size, &frame, &length);
         }
         if (request->status == OHLC_OK) {
             request->status = ohlc_wal_write(db, frame, length, next->seq);
@@ -976,7 +789,7 @@ static void* commit_worker(void* argument) {
         size_t bytes = 0;
         while (queue->count != 0 && count < OHLC_COMMIT_GROUP) {
             ohlc_write_request* request = queue->queue[queue->head];
-            size_t size = request->count * OHLC_WRITE_BYTES + 96u;
+            size_t size = request->size + 96u;
             if (count != 0 && bytes + size > OHLC_FRAME_LIMIT) {
                 break;
             }
@@ -1028,13 +841,14 @@ static void commits_destroy(ohlc_db* db) {
     pthread_mutex_destroy(&queue->mutex);
 }
 
-ohlc_status ohlc_write(ohlc_db* db, uint32_t table_id, const void* rows, size_t count,
-                       uint64_t* commit_seq) {
+static ohlc_status submit_write(ohlc_db* db, uint32_t table_id, const void* rows, size_t size,
+                                size_t count, bool named, uint64_t* commit_seq) {
     if (db == NULL || rows == NULL || commit_seq == NULL || count == 0 ||
         count > OHLC_MAX_BATCH_ROWS) {
         return OHLC_INVALID;
     }
-    ohlc_write_request request = {.table = table_id, .rows = rows, .count = count};
+    ohlc_write_request request = {
+        .table = table_id, .rows = rows, .size = size, .named = named, .count = count};
     ohlc_commit_queue* queue = &db->commits;
     pthread_mutex_lock(&queue->mutex);
     if (queue->active == 0 && queue->count == 0) {
@@ -1066,6 +880,33 @@ ohlc_status ohlc_write(ohlc_db* db, uint32_t table_id, const void* rows, size_t 
         *commit_seq = request.sequence;
     }
     return request.status;
+}
+
+ohlc_status ohlc_write(ohlc_db* db, uint32_t table_id, const void* rows, size_t count,
+                       uint64_t* commit_seq) {
+    return submit_write(db, table_id, rows, count * OHLC_WRITE_BYTES, count, false, commit_seq);
+}
+
+ohlc_status ohlc_submit_named(ohlc_db* db, uint32_t table_id, const void* payload, size_t size,
+                              size_t count, uint64_t* sequence) {
+    return submit_write(db, table_id, payload, size, count, true, sequence);
+}
+
+ohlc_status ohlc_write_named(ohlc_db* db, uint32_t table_id, const ohlc_bytes* tickers,
+                             size_t ticker_count, const void* rows, size_t count,
+                             uint64_t* commit_seq) {
+    if (db == NULL || commit_seq == NULL) {
+        return OHLC_INVALID;
+    }
+    uint8_t* payload = NULL;
+    size_t size = 0;
+    ohlc_status status =
+        ohlc_named_pack(&db->allocator, tickers, ticker_count, rows, count, &payload, &size);
+    if (status == OHLC_OK) {
+        status = submit_write(db, table_id, payload, size, count, true, commit_seq);
+    }
+    ohlc_free(&db->allocator, payload);
+    return status;
 }
 
 static ohlc_status cursor_new(ohlc_db* db, uint32_t table_id, ohlc_cursor** output) {
@@ -1114,7 +955,7 @@ ohlc_status ohlc_series(ohlc_db* db, uint32_t table_id, uint32_t ticker_code, ui
     if (status != OHLC_OK) {
         return status;
     }
-    if (ticker_code >= cursor->root->ticker_count) {
+    if (ticker_code >= ohlc_dictionary_count(cursor->table)) {
         ohlc_cursor_close(cursor);
         return OHLC_NOT_FOUND;
     }
@@ -1245,7 +1086,7 @@ static ohlc_status plan_cross(ohlc_cursor* cursor) {
     uint32_t column = cursor->cross_code % 8u;
     size_t scanned = 0;
     while (cursor->view_count < OHLC_READ_WINDOW &&
-           cursor->next_code < cursor->root->ticker_count) {
+           cursor->next_code < ohlc_dictionary_count(cursor->table)) {
         uint64_t first = cursor->next_code;
         uint32_t group = (uint32_t)(first / 16u);
         cursor->next_code += 16;
@@ -1265,7 +1106,8 @@ static ohlc_status plan_cross(ohlc_cursor* cursor) {
             }
             size_t index = cursor->view_count;
             size_t before = cursor->planned;
-            for (uint32_t row = 0; row < 16 && first + row < cursor->root->ticker_count; row++) {
+            for (uint32_t row = 0; row < 16 && first + row < ohlc_dictionary_count(cursor->table);
+                 row++) {
                 if ((presence[row] & (1u << column)) != 0) {
                     cursor->plan[cursor->planned++] =
                         (ohlc_result_plan){.key = (uint32_t)(first + row),
@@ -1281,7 +1123,7 @@ static ohlc_status plan_cross(ohlc_cursor* cursor) {
             return OHLC_CANCELLED;
         }
     }
-    cursor->done = cursor->next_code >= cursor->root->ticker_count;
+    cursor->done = cursor->next_code >= ohlc_dictionary_count(cursor->table);
     return OHLC_OK;
 }
 

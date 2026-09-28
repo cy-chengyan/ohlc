@@ -673,3 +673,31 @@ python3 tools/summarize_retirement.py "$OHLC_LIFECYCLE_ROOT" --output summary.js
 本轮全部临时行情库已删除，测试端口关闭，原有 MySQL 服务保持运行。
 2026-09-27 19:35:21（UTC+8）核对 `/ssd02` 可用空间为 960,741,089,280 B；
 保留的仅为小体积工具、日志、冻结源码及证据归档。
+
+
+## 表级证券字典修订验收（2026-09-28）
+
+本节单独记录格式 5 / 协议 4 / C ABI 2 的本地功能验收。前文 2026-09-27 的 Linux
+性能数据属于旧的全库证券字典实现，不代表新名称写入路径的性能。
+
+环境：macOS / Apple Silicon（Darwin arm64），CMake 默认严格警告构建，Java 21。
+完整构建成功；`ctest --test-dir build --output-on-failure -j 4` 共 8 项全部通过，耗时 11.08 秒。
+`clang-format 21.1.8` 规范检查通过；Python 绑定与可靠性工具语法检查通过。
+
+| 验证范围 | 本次结果 |
+|---|---|
+| 表级字典 | 不同表独立从 0 分配；同名证券可有不同编号；解析与横截面按表隔离 |
+| 原子创建 | 名称写入无需注册；重复逻辑键（包括同名不同批次下标）整批拒绝，不留下证券或消耗编号 |
+| 资源失败 | 预算不足拒绝写入；旧字典、提交序号及后续编号不受影响 |
+| 恢复与生命周期 | WAL-only 重开、检查点重开、删表后旧快照读取、同名重建字典重新从 0 开始 |
+| 格式边界 | 有效的格式 4 文件头返回 `UNSUPPORTED`，不迁移旧库 |
+| 各使用入口 | C、Python、Java 网络/嵌入式，shell 插入和导入；名称批量写入与表级字典查询 |
+| 不确定结果 | 名称写入发出后丢失响应返回 `OUTCOME_UNKNOWN`；不自动重试 |
+| 既有回归 | core、concurrency、pipeline、embedded、network、transport、config、admin 全部通过 |
+
+原始输出保存在本地构建目录，不进入设计文档或发布包：
+[CTest 日志](../build/acceptance/table-dictionary-20260928/ctest.log)、
+[格式检查](../build/acceptance/table-dictionary-20260928/format.log)、
+[环境与结果](../build/acceptance/table-dictionary-20260928/validation.json)。
+
+本次没有执行 Linux 验证、断电持久性测试或性能复测。现有测试数据库没有迁移、删除或重新导入。

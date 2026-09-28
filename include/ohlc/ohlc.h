@@ -11,8 +11,8 @@ extern "C" {
 #endif
 
 #define OHLC_VERSION "0.1.0-beta.1"
-#define OHLC_ABI_VERSION 1u
-#define OHLC_FORMAT_VERSION 4u
+#define OHLC_ABI_VERSION 2u
+#define OHLC_FORMAT_VERSION 5u
 #define OHLC_ROW_BYTES 32u
 #define OHLC_WRITE_BYTES 40u
 #define OHLC_RESULT_BYTES 36u
@@ -88,6 +88,7 @@ typedef struct ohlc_cursor ohlc_cursor;
 typedef struct {
     uint64_t commit_seq;
     uint64_t checkpoint_seq;
+    /* Sum of dictionary entries in live tables; cross-table names count twice. */
     uint64_t ticker_count;
     uint32_t table_count;
     uint64_t memory_bytes;
@@ -134,10 +135,21 @@ ohlc_status ohlc_table_list(ohlc_db* db, uint32_t start_id, ohlc_table_info* out
                             size_t capacity, size_t* count, uint64_t* snapshot_seq);
 
 /* Ticker bytes are exact, may contain NUL, and have length 1..4096. */
-ohlc_status ohlc_register(ohlc_db* db, ohlc_bytes ticker, uint32_t* code, uint64_t* seq);
-ohlc_status ohlc_resolve(ohlc_db* db, ohlc_bytes ticker, uint32_t* code);
-/* The returned bytes are immutable and borrowed until database close. */
-ohlc_status ohlc_ticker(ohlc_db* db, uint32_t code, ohlc_bytes* output);
+ohlc_status ohlc_register(ohlc_db* db, uint32_t table_id, ohlc_bytes ticker, uint32_t* code,
+                          uint64_t* seq);
+ohlc_status ohlc_resolve(ohlc_db* db, uint32_t table_id, ohlc_bytes ticker, uint32_t* code);
+/* Copy exact bytes into caller-owned storage; output borrows that 4096-byte buffer.
+ * Codes belong to (database UUID, table ID). Registration is optional: named
+ * writes create missing tickers in the same transaction as their rows. */
+ohlc_status ohlc_ticker(ohlc_db* db, uint32_t table_id, uint32_t code, uint8_t buffer[4096],
+                        ohlc_bytes* output);
+
+/* Rows use indexes into tickers, not persistent codes. Only referenced names are
+ * created. Names and rows are borrowed for this call. Duplicate logical keys
+ * reject the entire batch, including new names. All write guarantees below apply. */
+ohlc_status ohlc_write_named(ohlc_db* db, uint32_t table_id, const ohlc_bytes* tickers,
+                             size_t ticker_count, const void* rows, size_t count,
+                             uint64_t* commit_seq);
 
 /* Encoded rows are (ticker_code:u32, time_key:u32, row:32), little endian.
  * The buffer is borrowed only for this call. Duplicate keys reject the entire

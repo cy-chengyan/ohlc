@@ -294,7 +294,7 @@ static void open_connection(connection* client, bool loading) {
                 int length = snprintf(ticker, sizeof(ticker), "S%05" PRIu32, i);
                 uint32_t code = UINT32_MAX;
                 uint64_t sequence = 0;
-                require_ohlc(ohlc_client_register(client->ohlc,
+                require_ohlc(ohlc_client_register(client->ohlc, client->table.id,
                                                   (ohlc_bytes){ticker, (size_t)length}, &code,
                                                   &sequence),
                              "OHLC register");

@@ -18,6 +18,9 @@ and an interactive command shell.
 [RHEL packages](#rhel-packages) · [Benchmarks](#benchmarks) ·
 [Design](docs/design.md) · [Test report](docs/test-report.md)
 
+Current development format: **disk 5 / protocol 4 / C ABI 2**. Earlier test databases are
+rejected as unsupported; use a new database directory. No migration is provided.
+
 ## What it provides
 
 - User-created tables for periods such as `1m`, `3m`, `1d`, and `5d`, all with the same schema.
@@ -50,9 +53,10 @@ The encoded row payload is **32 bytes**. Indexes, metadata, WAL, unused tile slo
 checkpoint images require additional space. Native C structure padding is not the storage format;
 use the supplied codecs.
 
-Register a ticker once before using the normal insert/write APIs. Re-registering the same ticker
-returns its existing ID. The shell's batch importer can register missing tickers automatically.
-IDs remain stable; stopping writes for a delisted ticker preserves its history and does not create
+Each table owns its own ticker dictionary. Normal insert/write APIs and shell imports create
+missing tickers atomically with their rows; no prior registration is needed. IDs start at zero
+in each table and are scoped to the database UUID and table ID. Optional table-level registration
+is available for low-level writes using persistent codes. IDs remain stable; stopping writes for a delisted ticker preserves its history and does not create
 placeholder rows. A stored zero is a valid value, not a missing-data marker.
 
 Range queries use **`[start, end)`** and return records in actual time order, including after historical
@@ -131,7 +135,6 @@ Try the following commands against a fresh demo database:
 ```text
 help;
 create bars_1m --period 1m --timezone UTC;
-register AAPL;
 insert bars_1m AAPL "2026-09-01 09:30:00Z" 10000 10100 9950 10080 1200 12100000 1000000;
 insert bars_1m AAPL "2026-09-01 09:31:00Z" 10080 10120 10000 10100 900 9100000 1000000;
 series bars_1m AAPL from "2026-09-01 09:30:00Z" to "2026-09-01 09:32:00Z" --all;
@@ -198,7 +201,6 @@ from ohlc import Database
 
 with Database("./data/python-demo", create=True) as db:
     table = db.create("bars_1m", period="1m", timezone="UTC")
-    db.register("AAPL")
     table.insert("AAPL", "2026-09-01 09:30:00Z",
                  (10000, 10100, 9950, 10080, 1200, 12100000, 1000000))
     with table.cross("2026-09-01 09:30:00Z") as query:

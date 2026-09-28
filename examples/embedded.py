@@ -12,7 +12,6 @@ def main():
     options = DatabaseOptions(memory_limit=256 << 20, cache_bytes=16 << 20)
     with Database(sys.argv[1], create=True, options=options) as db:
         table = db.create("bars_3m", period="3m", timezone="Asia/Shanghai")
-        db.register("AAPL")
         table.write([
             ("AAPL", "20260901 09:30:00", (10000, 10100, 9950, 10080, 1200, 12100000, 1000000)),
             ("AAPL", "20260901 09:33:00", (10080, 10120, 10000, 10100, 900, 9100000, 1000000)),

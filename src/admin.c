@@ -437,7 +437,7 @@ static ohlc_status check_database(ohlc_db* db) {
                 status = ohlc_series(db, tables[table].id, (uint32_t)ticker, 0,
                                      UINT64_C(4294967296), &cursor);
                 if (status == OHLC_NOT_FOUND) {
-                    continue;
+                    break;
                 }
                 size_t count = 1;
                 while (status == OHLC_OK && count != 0) {

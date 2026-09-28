@@ -25,7 +25,7 @@ ohlc_status ohlc_storage_header(ohlc_db* db, int fd, uint32_t type, uint32_t tab
                                 uint64_t generation, bool create) {
     uint8_t header[OHLC_BLOCK_BYTES] = {0};
     if (create) {
-        memcpy(header, "OHLCFIL4", 8);
+        memcpy(header, "OHLCFIL5", 8);
         ohlc_put_u32(header + 8, OHLC_FORMAT_VERSION);
         ohlc_put_u32(header + 12, type);
         memcpy(header + 16, db->uuid, 16);
@@ -52,7 +52,7 @@ ohlc_status ohlc_storage_header(ohlc_db* db, int fd, uint32_t type, uint32_t tab
     if (ohlc_get_u32(header + 8) != OHLC_FORMAT_VERSION) {
         return OHLC_UNSUPPORTED;
     }
-    if (header[7] != '4' || ohlc_get_u32(header + 12) != type ||
+    if (header[7] != '5' || ohlc_get_u32(header + 12) != type ||
         memcmp(header + 16, db->uuid, 16) != 0 || ohlc_get_u32(header + 32) != table ||
         ohlc_get_u32(header + 36) != volume || ohlc_get_u32(header + 40) != OHLC_BLOCK_BYTES ||
         ohlc_get_u32(header + 44) != OHLC_ROW_BYTES || ohlc_get_u32(header + 48) != 16 ||

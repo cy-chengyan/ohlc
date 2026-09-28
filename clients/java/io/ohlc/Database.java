@@ -36,7 +36,7 @@ public final class Database implements AutoCloseable {
             } else {
                 System.load(Path.of(path).toAbsolutePath().toString());
             }
-            if (abiVersion() != 1) {
+            if (abiVersion() != 2) {
                 throw new UnsatisfiedLinkError("Incompatible ohlc native ABI");
             }
         }
@@ -54,9 +54,11 @@ public final class Database implements AutoCloseable {
         private static native long drop(long database, long id) throws Ohlc.Failure;
         private static native byte[] create(long database, byte[] name, long period, boolean days,
                                            byte[] timezone, byte[] description) throws Ohlc.Failure;
-        private static native long[] ticker(long database, byte[] ticker, boolean register)
+        private static native long[] ticker(long database, long table, byte[] ticker, boolean register)
             throws Ohlc.Failure;
-        private static native byte[] tickerAt(long database, long code) throws Ohlc.Failure;
+        private static native byte[] tickerAt(long database, long table, long code) throws Ohlc.Failure;
+        private static native long writeNamed(long database, long table, ByteBuffer batch,
+                                              int size) throws Ohlc.Failure;
         private static native long write(long database, long table, ByteBuffer rows, int offset,
                                          int length) throws Ohlc.Failure;
         private static native long series(long database, long table, long ticker, long start,
@@ -284,11 +286,11 @@ public final class Database implements AutoCloseable {
         }
     }
 
-    public Ohlc.Registration register(byte[] ticker) throws IOException {
+    public Ohlc.Registration register(long table, byte[] ticker) throws IOException {
         ticker(ticker);
         state.lifecycle.readLock().lock();
         try {
-            long[] result = Native.ticker(state.requireOpen(), ticker, true);
+            long[] result = Native.ticker(state.requireOpen(), table, ticker, true);
             return new Ohlc.Registration(result[0], result[1]);
         } finally {
             Reference.reachabilityFence(Database.this);
@@ -296,34 +298,42 @@ public final class Database implements AutoCloseable {
         }
     }
 
-    public Ohlc.Registration register(String ticker) throws IOException {
-        return register(ticker.getBytes(StandardCharsets.UTF_8));
+    public Ohlc.Registration register(long table, String ticker) throws IOException {
+        return register(table, ticker.getBytes(StandardCharsets.UTF_8));
     }
 
-    public long resolve(byte[] ticker) throws IOException {
+    public long resolve(long table, byte[] ticker) throws IOException {
         ticker(ticker);
         state.lifecycle.readLock().lock();
         try {
-            return Native.ticker(state.requireOpen(), ticker, false)[0];
+            return Native.ticker(state.requireOpen(), table, ticker, false)[0];
         } finally {
             Reference.reachabilityFence(Database.this);
             state.lifecycle.readLock().unlock();
         }
     }
 
-    public long resolve(String ticker) throws IOException {
-        return resolve(ticker.getBytes(StandardCharsets.UTF_8));
+    public long resolve(long table, String ticker) throws IOException {
+        return resolve(table, ticker.getBytes(StandardCharsets.UTF_8));
     }
 
-    public List<Ohlc.Ticker> dictionary(long start, int limit) throws IOException {
+    public List<Ohlc.Ticker> dictionary(long table, long start, int limit) throws IOException {
         page(start, limit);
         state.lifecycle.readLock().lock();
         try {
             long handle = state.requireOpen();
-            long end = Math.min(stats().tickerCount(), start + limit);
+            long end = Math.min(0x100000000L, start + limit);
             List<Ohlc.Ticker> result = new ArrayList<>();
             for (long id = start; id < end; id++) {
-                result.add(new Ohlc.Ticker(id, Native.tickerAt(handle, id)));
+                try {
+                    result.add(new Ohlc.Ticker(id, Native.tickerAt(handle, table, id)));
+                } catch (Ohlc.Failure failure) {
+                    if (failure.status != 2) {
+                        throw failure;
+                    }
+                    Native.table(handle, null, table);
+                    break;
+                }
             }
             return List.copyOf(result);
         } finally {
@@ -371,6 +381,32 @@ public final class Database implements AutoCloseable {
             return Native.format(days, key);
         }
 
+        public long resolve(String ticker) throws IOException {
+            return Database.this.resolve(id, ticker);
+        }
+
+        public Ohlc.Registration register(String ticker) throws IOException {
+            return Database.this.register(id, ticker);
+        }
+
+        public List<Ohlc.Ticker> dictionary(long start, int limit) throws IOException {
+            return Database.this.dictionary(id, start, limit);
+        }
+
+        /** Create missing names and commit rows atomically; preserve input position. */
+        public long write(byte[][] tickers, ByteBuffer rows) throws IOException {
+            ByteBuffer encoded = Ohlc.namedBatch(tickers, rows);
+            ByteBuffer batch = ByteBuffer.allocateDirect(encoded.remaining()).put(encoded).flip();
+            state.lifecycle.readLock().lock();
+            try {
+                return Native.writeNamed(state.requireOpen(), id, batch, batch.remaining());
+            } finally {
+                Reference.reachabilityFence(this);
+                Reference.reachabilityFence(Database.this);
+                state.lifecycle.readLock().unlock();
+            }
+        }
+
         /** Commit one batch without changing its position. A direct buffer is
          * borrowed for the call; a heap buffer is copied once. Do not mutate
          * the source until the call returns. No mutation is retried implicitly.
@@ -398,9 +434,9 @@ public final class Database implements AutoCloseable {
         public long insert(String ticker, String time, int open, int high, int low, int close,
                            long volume, long amountBits, long factor) throws IOException {
             ByteBuffer row = buffer(Ohlc.WRITE_BYTES);
-            Ohlc.putWrite(row, resolve(ticker), timeKey(time), open, high, low, close, volume,
+            Ohlc.putWrite(row, 0, timeKey(time), open, high, low, close, volume,
                           amountBits, factor);
-            return write(row.flip());
+            return write(new byte[][] {ticker.getBytes(StandardCharsets.UTF_8)}, row.flip());
         }
 
         public Query series(String ticker, String start, String end) throws IOException {

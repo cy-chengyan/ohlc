@@ -105,7 +105,8 @@ static ohlc_status dispatch(server* instance, const ohlc_frame* request, const u
     size_t size = request->size;
     uint16_t opcode = request->opcode;
     *output_size = 0;
-    if ((opcode == 7 || opcode == 8 || opcode == 9 || opcode == 13 || opcode == 14) &&
+    if ((opcode == 7 || opcode == 8 || opcode == 9 || opcode == 13 || opcode == 14 ||
+         opcode == 15) &&
         (capabilities & OHLC_CAP_WRITE) == 0) {
         return OHLC_UNAUTHORIZED;
     }
@@ -145,13 +146,14 @@ static ohlc_status dispatch(server* instance, const ohlc_frame* request, const u
     }
     if (opcode == 3 || opcode == 7) {
         ohlc_bytes ticker;
-        if (!string_body(body, size, &ticker)) {
+        if (size < 4 || !string_body(body + 4, size - 4, &ticker)) {
             return OHLC_INVALID;
         }
         uint32_t code;
         uint64_t sequence;
-        ohlc_status status = opcode == 3 ? ohlc_resolve(db, ticker, &code)
-                                         : ohlc_register(db, ticker, &code, &sequence);
+        ohlc_status status = opcode == 3
+                                 ? ohlc_resolve(db, ohlc_get_u32(body), ticker, &code)
+                                 : ohlc_register(db, ohlc_get_u32(body), ticker, &code, &sequence);
         if (status == OHLC_OK) {
             ohlc_put_u32(output, code);
             *output_size = 4;
@@ -163,35 +165,49 @@ static ohlc_status dispatch(server* instance, const ohlc_frame* request, const u
         return status;
     }
     if (opcode == 4) {
-        if (size != 8) {
+        if (size != 12) {
             return OHLC_INVALID;
         }
-        uint64_t start = ohlc_get_u32(body);
-        uint32_t limit = ohlc_get_u32(body + 4);
+        uint64_t start = ohlc_get_u32(body + 4);
+        uint32_t limit = ohlc_get_u32(body + 8);
         if (limit == 0 || limit > 256) {
             return OHLC_INVALID;
         }
-        ohlc_stats stats;
-        ohlc_get_stats(db, &stats);
+        ohlc_root* root = ohlc_root_acquire(db);
+        const ohlc_table* table = ohlc_root_table(root, ohlc_get_u32(body));
+        if (table == NULL) {
+            ohlc_root_release(db, root);
+            return OHLC_NOT_FOUND;
+        }
         size_t position = 12;
         uint32_t count = 0;
-        while (start < stats.ticker_count && count < limit) {
-            ohlc_bytes ticker;
-            ohlc_status status = ohlc_ticker(db, (uint32_t)start, &ticker);
-            if (status != OHLC_OK) {
-                return status;
-            }
+        while (start < ohlc_dictionary_count(table) && count < limit) {
+            const ohlc_ticker_entry* entry = table->dictionary->entries[start];
             ohlc_put_u32(output + position, (uint32_t)start);
-            ohlc_put_u32(output + position + 4, (uint32_t)ticker.size);
-            memcpy(output + position + 8, ticker.data, ticker.size);
-            position += 8 + ticker.size;
+            ohlc_put_u32(output + position + 4, entry->length);
+            memcpy(output + position + 8, entry->bytes, entry->length);
+            position += 8u + entry->length;
             count++;
             start++;
         }
-        ohlc_put_u64(output, stats.commit_seq);
+        ohlc_put_u64(output, root->seq);
         ohlc_put_u32(output + 8, count);
         *output_size = (uint32_t)position;
+        ohlc_root_release(db, root);
         return OHLC_OK;
+    }
+    if (opcode == 15) {
+        if (size < 12) {
+            return OHLC_INVALID;
+        }
+        uint64_t sequence = 0;
+        ohlc_status status = ohlc_submit_named(db, ohlc_get_u32(body), body + 8, size - 8,
+                                               ohlc_get_u32(body + 4), &sequence);
+        if (status == OHLC_OK) {
+            ohlc_put_u64(output, sequence);
+            *output_size = 8;
+        }
+        return status;
     }
     if (opcode == 8) {
         if (size < 8 || ohlc_get_u32(body + 4) > OHLC_MAX_BATCH_ROWS ||
@@ -420,7 +436,7 @@ static void* checkpoint_worker(void* argument) {
 
 int main(int argc, char** argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        printf("ohlcd %s (ABI %u, format %u, protocol 3)\n", ohlc_version(), OHLC_ABI_VERSION,
+        printf("ohlcd %s (ABI %u, format %u, protocol 4)\n", ohlc_version(), OHLC_ABI_VERSION,
                OHLC_FORMAT_VERSION);
         return 0;
     }

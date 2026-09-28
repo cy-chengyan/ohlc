@@ -20,7 +20,7 @@ from network_test import connect_when_ready, require_error
 
 
 def frame(operation, request, body=b"", flags=3, status=0, chunk=0):
-    return struct.pack("<4sHHIIQII", b"OHLC", 3, operation, flags, len(body), request,
+    return struct.pack("<4sHHIIQII", b"OHLC", 4, operation, flags, len(body), request,
                        status, chunk) + body
 
 
@@ -70,12 +70,16 @@ def wait_fake(thread, errors):
 
 def protocol_failures(library, shell):
     def lost_ack(peer):
-        operation, _, _ = receive(peer)
+        operation, request, _ = receive(peer)
+        if operation == 10:
+            definition = struct.pack("<I", 4) + b"bars" + struct.pack("<IIII", 2, 1, 0, 0)
+            peer.sendall(frame(10, request, struct.pack("<IQ", 1, 1) + definition))
+            operation, _, _ = receive(peer)
         assert operation == 7
     port, thread, errors = fake_server(lost_ack)
     with Connection(port=port, library=library) as client:
         try:
-            client.register("MAY_HAVE_COMMITTED")
+            client.register(1, "MAY_HAVE_COMMITTED")
         except OutcomeUnknown as error:
             assert error.code == 9
         else:
@@ -89,9 +93,21 @@ def protocol_failures(library, shell):
         wait_fake(thread, errors)
     port, thread, errors = fake_server(lost_ack)
     result = subprocess.run([shell, "--port", str(port), "--execute",
-                             'register "MAY_HAVE_COMMITTED"; register "MUST_NOT_RUN";'],
+                             'register bars "MAY_HAVE_COMMITTED"; register bars "MUST_NOT_RUN";'],
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 4, result.stderr
+    wait_fake(thread, errors)
+
+    def lost_named_ack(peer):
+        operation, request, _ = receive(peer)
+        assert operation == 10
+        definition = struct.pack("<I", 4) + b"bars" + struct.pack("<IIII", 2, 1, 0, 0)
+        peer.sendall(frame(10, request, struct.pack("<IQ", 1, 1) + definition))
+        operation, _, _ = receive(peer)
+        assert operation == 15
+    port, thread, errors = fake_server(lost_named_ack)
+    with Connection(port=port, library=library) as client:
+        require_error(9, lambda: client.table("bars").insert("NEW", "20260901", (1,) * 7))
     wait_fake(thread, errors)
 
     def lost_drop_ack(peer):
@@ -221,7 +237,7 @@ def plain_tcp(server, library, shell, root, token, authenticated):
                 assert transport.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) != 0
             time.sleep(1.1)
             table = client.create("plain", period="1d")
-            client.register("TCP")
+            client.register(1, "TCP")
             table.insert("TCP", "20260901", (1, 2, 3, 4, 5, 6, 7))
             with table.cross("20260901") as query:
                 rows = [row for chunk in query for row in chunk.rows()]
@@ -265,7 +281,7 @@ def anonymous_tls(server, library, root, certificate, private_key):
                                 ca_file=certificate, library=library) as client:
             time.sleep(1.1)
             table = client.create("anonymous", period="1d")
-            client.register("TLS")
+            client.register(1, "TLS")
             table.insert("TLS", "20260901", (1, 2, 3, 4, 5, 6, 7))
             with table.cross("20260901") as query:
                 rows = [row for chunk in query for row in chunk.rows()]
@@ -319,7 +335,7 @@ def main():
             with connect_when_ready(process, **options) as client:
                 client.ping()
                 table = client.create("secure", period="1d")
-                client.register("TLS")
+                client.register(1, "TLS")
                 table.insert("TLS", "20260901", (1, 2, 3, 4, 5, 6, 7))
                 with table.cross("20260901") as query:
                     assert sum(chunk.count for chunk in query) == 1

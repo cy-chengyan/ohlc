@@ -62,10 +62,10 @@ def main():
                 minute = client.create("bars_3m", period="3m", timezone="Asia/Shanghai")
                 day = client.create("bars_5d", period="5d")
                 require_error(11, lambda: client.create("bars_3m", timezone="UTC"))
-                code, _ = client.register("AAPL")
-                binary, _ = client.register(b"00\0\xff\n")
-                assert client.register("AAPL")[0] == code
-                assert list(client.dictionary()) == [(code, b"AAPL"), (binary, b"00\0\xff\n")]
+                code, _ = client.register(1, "AAPL")
+                binary, _ = client.register(1, b"00\0\xff\n")
+                assert client.register(1, "AAPL")[0] == code
+                assert list(client.dictionary(1)) == [(code, b"AAPL"), (binary, b"00\0\xff\n")]
                 assert [table.name for table in client.tables()] == ["bars_3m", "bars_5d"]
                 key = minute.time_key("20260901 09:30:00")
                 assert minute.time_key("2026-09-01T01:30:00Z") == key
@@ -80,7 +80,7 @@ def main():
                 client.checkpoint()
                 stats = client.stats()
                 assert stats["commit_seq"] == stats["checkpoint_seq"]
-                assert stats["table_count"] == 2 and stats["ticker_count"] == 2
+                assert stats["table_count"] == 2 and stats["ticker_count"] == 3
                 received = []
                 with minute.series("AAPL", key, key + count * 3) as query:
                     chunks = list(query)
@@ -135,7 +135,7 @@ def main():
             formatted = execute('cross bars_3m "20260901 09:30:00" --format table;')
             assert "2026-09-01T09:30:00+08:00" in formatted.stdout
             execute('cross bars_3m "unterminated', 2)
-            execute('register "SHELL"; insert bars_5d SHELL "20260901" -2147483648 2147483647 0 -1 4294967295 18446744073709551615 4294967295;')
+            execute('insert bars_5d SHELL "20260901" -2147483648 2147483647 0 -1 4294967295 18446744073709551615 4294967295;')
             output = root / "result.jsonl"
             execute(f'cross bars_5d "20260901" --format jsonl --output "{output}";')
             assert '"amount":"18446744073709551615"' in output.read_text()
@@ -149,9 +149,9 @@ def main():
                                    "IMPORT\t20260903\t1\t2\t3\t4\t5\t18446744073709551616\t7\n")
             partial = execute(f'import bars_5d "{import_path}" --batch-rows 1;', 1)
             assert "confirmed_rows=1" in partial.stderr
-            execute('resolve "NOT_REGISTERED"; register "MUST_NOT_RUN";', 1)
+            execute('resolve bars_3m "NOT_REGISTERED"; register bars_3m "MUST_NOT_RUN";', 1)
             with Connection(**options) as client:
-                require_error(2, lambda: client.resolve("MUST_NOT_RUN"))
+                require_error(2, lambda: client.resolve(1, "MUST_NOT_RUN"))
                 with client.table("bars_5d").cross("20260902") as query:
                     result = [row for chunk in query for row in chunk.rows()]
                 assert len(result) == 1 and result[0][1:] == (1, 2, 3, 4, 5, 6, 7)
@@ -161,14 +161,14 @@ def main():
                 assert reader.stats()["table_count"] >= 2
                 require_error(8, reader.checkpoint)
                 require_error(8, lambda: reader.drop("bars_5d"))
-                require_error(8, lambda: reader.register("DENIED"))
+                require_error(8, lambda: reader.register(1, "DENIED"))
                 with reader.table("bars_3m").cross(key) as query:
                     assert sum(chunk.count for chunk in query) == 2
             # Oversized untrusted headers are rejected before body allocation.
             with socket.socket(socket.AF_UNIX) as peer:
                 peer.settimeout(5)
                 peer.connect(socket_path)
-                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 3, 1, 0, 0xffffffff, 1, 0, 0))
+                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 4, 1, 0, 0xffffffff, 1, 0, 0))
                 assert peer.recv(1) == b""
         finally:
             process.send_signal(signal.SIGTERM)

@@ -61,14 +61,18 @@ def _library(path):
         "ohlc_uuid": ([pointer, pointer], None),
         "ohlc_get_stats": ([pointer, C.POINTER(_Stats)], None),
         "ohlc_checkpoint": ([pointer], C.c_int),
+        "ohlc_table_get": ([pointer, C.c_uint32, C.POINTER(_Table)], C.c_int),
         "ohlc_table_open": ([pointer, C.c_char_p, C.POINTER(_Table)], C.c_int),
         "ohlc_table_create": ([pointer, C.POINTER(_Definition), C.POINTER(_Table)], C.c_int),
         "ohlc_table_drop": ([pointer, C.c_uint32, C.POINTER(C.c_uint64)], C.c_int),
         "ohlc_table_list": ([pointer, C.c_uint32, C.POINTER(_Table), C.c_size_t,
                              C.POINTER(C.c_size_t), C.POINTER(C.c_uint64)], C.c_int),
-        "ohlc_resolve": ([pointer, _Bytes, C.POINTER(C.c_uint32)], C.c_int),
-        "ohlc_register": ([pointer, _Bytes, C.POINTER(C.c_uint32), C.POINTER(C.c_uint64)], C.c_int),
-        "ohlc_ticker": ([pointer, C.c_uint32, C.POINTER(_Bytes)], C.c_int),
+        "ohlc_resolve": ([pointer, C.c_uint32, _Bytes, C.POINTER(C.c_uint32)], C.c_int),
+        "ohlc_register": ([pointer, C.c_uint32, _Bytes, C.POINTER(C.c_uint32),
+                          C.POINTER(C.c_uint64)], C.c_int),
+        "ohlc_ticker": ([pointer, C.c_uint32, C.c_uint32, pointer, C.POINTER(_Bytes)], C.c_int),
+        "ohlc_write_named": ([pointer, C.c_uint32, C.POINTER(_Bytes), C.c_size_t,
+                               pointer, C.c_size_t, C.POINTER(C.c_uint64)], C.c_int),
         "ohlc_write": ([pointer, C.c_uint32, pointer, C.c_size_t, C.POINTER(C.c_uint64)], C.c_int),
         "ohlc_series": ([pointer, C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint64,
                          C.POINTER(pointer)], C.c_int),
@@ -252,31 +256,37 @@ class Database:
                 start = table.id + 1
                 yield table
 
-    def _ticker_call(self, ticker, register):
+    def _ticker_call(self, table, ticker, register):
         raw = C.create_string_buffer(_ticker(ticker))
         data = _Bytes(C.addressof(raw), len(raw) - 1)
         code = C.c_uint32()
         sequence = C.c_uint64()
         with self._lease() as handle:
             if register:
-                status = self._lib.ohlc_register(handle, data, C.byref(code), C.byref(sequence))
+                status = self._lib.ohlc_register(
+                    handle, _uint(table), data, C.byref(code), C.byref(sequence))
             else:
-                status = self._lib.ohlc_resolve(handle, data, C.byref(code))
+                status = self._lib.ohlc_resolve(handle, _uint(table), data, C.byref(code))
             self._check(status)
         return (code.value, sequence.value) if register else code.value
 
-    def register(self, ticker):
-        return self._ticker_call(ticker, True)
+    def register(self, table, ticker):
+        return self._ticker_call(table, ticker, True)
 
-    def resolve(self, ticker):
-        return self._ticker_call(ticker, False)
+    def resolve(self, table, ticker):
+        return self._ticker_call(table, ticker, False)
 
-    def dictionary(self):
-        count = self.stats()["ticker_count"]
-        for code in range(count):
+    def dictionary(self, table):
+        for code in range(1 << 32):
             data = _Bytes()
+            buffer = C.create_string_buffer(4096)
             with self._lease() as handle:
-                self._check(self._lib.ohlc_ticker(handle, code, C.byref(data)))
+                status = self._lib.ohlc_ticker(handle, _uint(table), code, buffer, C.byref(data))
+                if status == 2:
+                    info = _Table()
+                    self._check(self._lib.ohlc_table_get(handle, _uint(table), C.byref(info)))
+                    return
+                self._check(status)
                 ticker = C.string_at(data.data, data.size)
             yield code, ticker
 
@@ -305,6 +315,18 @@ class Database:
 class EmbeddedTable(Table):
     """Immutable metadata bound to one embedded database; writes are atomic batches."""
 
+    def _write_named(self, tickers, encoded):
+        storage = (C.c_ubyte * len(encoded)).from_buffer(encoded)
+        buffers = [C.create_string_buffer(ticker) for ticker in tickers]
+        names = (_Bytes * len(buffers))(*[
+            _Bytes(C.addressof(buffer), len(buffer) - 1) for buffer in buffers])
+        sequence = C.c_uint64()
+        owner = self.connection
+        with owner._lease() as handle:
+            owner._check(owner._lib.ohlc_write_named(
+                handle, self.id, names, len(names), storage, len(encoded) // 40, C.byref(sequence)))
+        return sequence.value
+
     def write_encoded(self, buffer):
         """Borrow a contiguous writable buffer for this call, or copy a readonly buffer.
 
@@ -325,7 +347,7 @@ class EmbeddedTable(Table):
 
     def series(self, ticker, start, end):
         end = 1 << 32 if end == "@4294967296" or end == 1 << 32 else self.time_key(end)
-        return self.connection._query(self.id, self.connection.resolve(ticker),
+        return self.connection._query(self.id, self.resolve(ticker),
                                       self.time_key(start), end)
 
     def cross(self, time):

@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
         ohlc_bytes ticker = {name, (size_t)length};
         uint32_t code = 0;
         uint64_t sequence = 0;
-        require(ohlc_register(db, ticker, &code, &sequence));
+        require(ohlc_register(db, table.id, ticker, &code, &sequence));
         if (code != i) {
             return 1;
         }

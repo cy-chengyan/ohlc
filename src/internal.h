@@ -102,9 +102,26 @@ struct ohlc_band_node {
     void* children[];
 };
 
+typedef struct ohlc_ticker_entry {
+    _Atomic uint32_t refs;
+    uint64_t hash;
+    uint32_t code;
+    uint32_t length;
+    uint8_t bytes[];
+} ohlc_ticker_entry;
+
+typedef struct {
+    _Atomic uint32_t refs;
+    uint64_t count;
+    size_t capacity;
+    ohlc_ticker_entry** entries;
+    ohlc_ticker_entry** buckets;
+} ohlc_dictionary;
+
 typedef struct {
     _Atomic uint32_t refs;
     ohlc_table_info info;
+    ohlc_dictionary* dictionary;
     ohlc_time_node* times;
     uint64_t time_count;
     size_t time_page_count;
@@ -134,14 +151,6 @@ typedef struct ohlc_retired_table {
     uint32_t id;
 } ohlc_retired_table;
 
-typedef struct ohlc_ticker_entry {
-    struct ohlc_ticker_entry* next;
-    uint64_t hash;
-    uint32_t code;
-    uint32_t length;
-    uint8_t bytes[];
-} ohlc_ticker_entry;
-
 typedef struct {
     uint32_t id;
     int data_fd;
@@ -158,6 +167,8 @@ typedef struct {
     uint32_t id;
     int index_fd;
     uint64_t index_size;
+    uint64_t dictionary_disk_count;
+    uint64_t dictionary_disk_offset;
     size_t volume_count;
     ohlc_volume** volumes;
     uint64_t next_volume_id;
@@ -232,6 +243,8 @@ typedef struct {
 typedef struct {
     uint32_t table;
     const uint8_t* rows;
+    size_t size;
+    bool named;
     size_t count;
     uint64_t sequence;
     ohlc_status status;
@@ -264,8 +277,6 @@ struct ohlc_db {
     /* Recovery and checkpoint cleanup own this cursor; writers never change it. */
     uint32_t wal_first_id;
     uint64_t catalog_size;
-    uint64_t dictionary_disk_count;
-    uint64_t dictionary_disk_offset;
     _Atomic uint64_t checkpoint_generation;
     _Atomic uint64_t checkpoint_sequences[2];
     uint32_t checkpoint_wal_ids[2];
@@ -275,14 +286,8 @@ struct ohlc_db {
     pthread_mutex_t checkpoint_mutex;
     pthread_mutex_t writer;
     pthread_mutex_t root_mutex;
-    pthread_mutex_t dictionary_mutex;
     pthread_mutex_t storage_mutex;
     ohlc_root* root;
-    ohlc_ticker_entry** ticker_buckets;
-    size_t ticker_bucket_count;
-    ohlc_ticker_entry*** ticker_pages;
-    size_t ticker_page_count;
-    uint64_t dictionary_count;
     ohlc_table_files** files;
     size_t file_capacity;
     ohlc_retired_table* retired_tables;
@@ -385,9 +390,20 @@ ohlc_status ohlc_storage_reclaim_tables(ohlc_db* db);
 void ohlc_table_release(ohlc_allocator* a, ohlc_table* table);
 ohlc_status ohlc_prepare_write(ohlc_db* db, const ohlc_root* source, uint32_t table_id,
                                const uint8_t* rows, size_t count, ohlc_root** output);
-ohlc_status ohlc_dictionary_prepare(ohlc_db* db, ohlc_bytes ticker, uint32_t code,
-                                    ohlc_ticker_entry** output);
-void ohlc_dictionary_publish(ohlc_db* db, ohlc_ticker_entry* entry);
+uint64_t ohlc_dictionary_count(const ohlc_table* table);
+void ohlc_dictionary_retain(ohlc_dictionary* dictionary);
+void ohlc_dictionary_release(ohlc_allocator* allocator, ohlc_dictionary* dictionary);
+const ohlc_ticker_entry* ohlc_dictionary_find(const ohlc_dictionary* dictionary, ohlc_bytes ticker);
+ohlc_status ohlc_dictionary_add(ohlc_db* db, ohlc_table* table, ohlc_bytes ticker, uint32_t* code);
+ohlc_status ohlc_submit_named(ohlc_db* db, uint32_t table_id, const void* payload, size_t size,
+                              size_t count, uint64_t* sequence);
+ohlc_status ohlc_prepare_named(ohlc_db* db, const ohlc_root* source, uint32_t table_id,
+                               const uint8_t* payload, size_t size, size_t count,
+                               ohlc_root** output);
+/* Pack a batch-local name dictionary followed by fixed-size indexed rows. */
+ohlc_status ohlc_named_pack(ohlc_allocator* allocator, const ohlc_bytes* tickers,
+                            size_t ticker_count, const void* rows, size_t count, uint8_t** output,
+                            size_t* size);
 
 ohlc_status ohlc_storage_open(ohlc_db* db, bool* fresh);
 void ohlc_storage_close(ohlc_db* db);

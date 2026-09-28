@@ -14,7 +14,7 @@ public final class JavaClientTest {
             client.checkpoint();
             Ohlc.Stats stats = client.stats();
             assert stats.commitSequence() == stats.checkpointSequence();
-            assert stats.tableCount() == 2 && stats.tickerCount() == 2;
+            assert stats.tableCount() == 2 && stats.tickerCount() == 3;
             Ohlc.Table table = client.table("bars_3m");
             long key = table.timeKey("20260901 09:30:00");
             assert key == table.timeKey("2026-09-01T01:30:00Z");
@@ -28,7 +28,7 @@ public final class JavaClientTest {
             assert replacement.id > removed.id;
             assert client.tables(removed.id, 1).get(0).id == replacement.id;
             client.drop("java_drop");
-            assert client.dictionary(0, 128).size() == 2;
+            assert client.dictionary(1, 0, 128).size() == 2;
             long count = 0;
             try (Ohlc.Query query = table.series("AAPL", "20260901 09:30:00", "@4294967296")) {
                 Ohlc.Chunk chunk;
@@ -57,11 +57,12 @@ public final class JavaClientTest {
                 assert rows == 2;
             }
             Ohlc.Table java = client.create("java_day", 5, true, "", "Java contract check");
-            long code = client.register("JAVA").code();
+            long code = 0;
             ByteBuffer records = Ohlc.buffer(40);
             Ohlc.putWrite(records, code, java.timeKey("20260901"), Integer.MIN_VALUE,
                           Integer.MAX_VALUE, 0, -1, 0xffffffffL, -1L, 0xffffffffL);
-            java.write(records.flip());
+            java.write(new byte[][] {"JAVA".getBytes(StandardCharsets.UTF_8)}, records.flip());
+            assert java.resolve("JAVA") == code;
             try (Ohlc.Query query = java.cross("20260901")) {
                 Ohlc.Chunk chunk = query.next();
                 assert chunk.count() == 1;

@@ -284,7 +284,7 @@ static void test_checkpoint_overlap(ohlc_db* db, uint32_t table) {
     OK(change.status);
     uint32_t code = 0;
     uint64_t sequence = 0;
-    OK(ohlc_register(db, (ohlc_bytes){"NEW", 3}, &code, &sequence));
+    OK(ohlc_register(db, table, (ohlc_bytes){"NEW", 3}, &code, &sequence));
     ohlc_table_definition definition = {"created_during_checkpoint", OHLC_DAY, 1, "", ""};
     ohlc_table_info added;
     OK(ohlc_table_create(db, &definition, &added));
@@ -317,7 +317,7 @@ int main(void) {
         char name[16];
         length = snprintf(name, sizeof(name), "S%u", ticker);
         uint32_t code = 0;
-        OK(ohlc_register(db, (ohlc_bytes){name, (size_t)length}, &code, &sequence));
+        OK(ohlc_register(db, table.id, (ohlc_bytes){name, (size_t)length}, &code, &sequence));
         CHECK(code == ticker);
     }
     size_t count = 257u * 128u;
@@ -384,7 +384,7 @@ int main(void) {
     ohlc_table_info added;
     OK(ohlc_table_open(db, "created_during_checkpoint", &added));
     uint32_t code = 0;
-    OK(ohlc_resolve(db, (ohlc_bytes){"NEW", 3}, &code));
+    OK(ohlc_resolve(db, table.id, (ohlc_bytes){"NEW", 3}, &code));
     CHECK(code == 257);
     OK(ohlc_checkpoint(db));
     if (getenv("OHLC_TEST_SYNC_FAILURES") != NULL) {

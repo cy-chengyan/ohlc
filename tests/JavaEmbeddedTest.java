@@ -91,16 +91,16 @@ public final class JavaEmbeddedTest {
             assert replacement.id > removed.id;
             assert db.tables(removed.id, 1).get(0).id == replacement.id;
             db.drop("java_drop");
-            assert db.dictionary(0, 128).size() == 2;
+            assert db.dictionary(1, 0, 128).size() == 2;
             byte[] binary = {'0', '0', 0, (byte) 255, '\n'};
-            assert db.resolve(binary) == 1;
-            assert Arrays.equals(db.dictionary(1, 1).get(0).bytes(), binary);
+            assert db.resolve(1, binary) == 1;
+            assert Arrays.equals(db.dictionary(1, 1, 1).get(0).bytes(), binary);
             long key = minute.timeKey("20260901 09:30:00");
             assert key == minute.timeKey("2026-09-01T01:30:00Z");
             assert minute.timeKey(minute.formatTime(0xffffffffL)) == 0xffffffffL;
             long count = 0;
             ByteBuffer output = Database.buffer(19 * Ohlc.RESULT_BYTES + 7);
-            try (Database.Query query = minute.series(db.resolve("AAPL"), key, key + 1800)) {
+            try (Database.Query query = minute.series(db.resolve(1, "AAPL"), key, key + 1800)) {
                 while (true) {
                     output.clear().position(3).limit(output.capacity() - 4);
                     int rows = query.read(output);
@@ -123,7 +123,7 @@ public final class JavaEmbeddedTest {
                 assert query.next() == null;
             }
             Database.Table day = db.create("java_day", 5, true, "", "JNI \ud83d\ude80");
-            long ticker = db.register("JAVA").code();
+            long ticker = 0;
             long date = day.timeKey("20260901");
             assert day.timeKey(day.formatTime(0xffffffffL)) == 0xffffffffL;
             // Heap and sliced direct inputs preserve position and uint64 bits.
@@ -131,7 +131,9 @@ public final class JavaEmbeddedTest {
             heap.position(3);
             put(heap, ticker, date);
             heap.flip().position(3);
-            day.write(heap.asReadOnlyBuffer());
+            day.write(new byte[][] {"JAVA".getBytes(java.nio.charset.StandardCharsets.UTF_8)},
+                      heap.asReadOnlyBuffer());
+            assert day.resolve("JAVA") == ticker;
             assert heap.position() == 3;
             ByteBuffer direct = Database.buffer(128);
             direct.position(4);
@@ -171,7 +173,7 @@ public final class JavaEmbeddedTest {
         try (Database reopened = Database.open(path)) {
             assert Arrays.equals(uuid, reopened.uuid());
             try (Database.Query query = reopened.table("java_day").cross("20260904")) {
-                checkRow(query.next().data(), reopened.resolve("JAVA"));
+                checkRow(query.next().data(), reopened.table("java_day").resolve("JAVA"));
             }
         }
         System.out.println("Java JNI, UTF-8, direct buffers, snapshots, close races and recovery: OK");

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#include "internal.h"
 #include "io_ohlc_Database_Native.h"
-#include "ohlc/ohlc.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -308,14 +308,14 @@ JNIEXPORT jobjectArray JNICALL Java_io_ohlc_Database_00024Native_tables(JNIEnv* 
 JNIEXPORT jbyteArray JNICALL Java_io_ohlc_Database_00024Native_create(JNIEnv* env, jclass type,
                                                                       jlong db, jbyteArray name,
                                                                       jlong period, jboolean days,
-                                                                      jbyteArray timezone,
+                                                                      jbyteArray zone,
                                                                       jbyteArray description) {
     (void)type;
     char name_text[64];
     char zone_text[256];
     char description_text[4097];
     if (!copy_text(env, name, name_text, sizeof(name_text)) ||
-        !copy_text(env, timezone, zone_text, sizeof(zone_text)) ||
+        !copy_text(env, zone, zone_text, sizeof(zone_text)) ||
         !copy_text(env, description, description_text, sizeof(description_text))) {
         return NULL;
     }
@@ -336,10 +336,11 @@ JNIEXPORT jbyteArray JNICALL Java_io_ohlc_Database_00024Native_create(JNIEnv* en
 }
 
 JNIEXPORT jlongArray JNICALL Java_io_ohlc_Database_00024Native_ticker(JNIEnv* env, jclass type,
-                                                                      jlong db, jbyteArray ticker,
+                                                                      jlong db, jlong table,
+                                                                      jbyteArray ticker,
                                                                       jboolean registering) {
     (void)type;
-    if (ticker == NULL) {
+    if (ticker == NULL || !uint32_valid(table)) {
         check(env, OHLC_INVALID);
         return NULL;
     }
@@ -356,8 +357,9 @@ JNIEXPORT jlongArray JNICALL Java_io_ohlc_Database_00024Native_ticker(JNIEnv* en
     uint32_t code = 0;
     uint64_t sequence = 0;
     ohlc_bytes value = {data, (size_t)size};
-    ohlc_status status = registering ? ohlc_register(database(db), value, &code, &sequence)
-                                     : ohlc_resolve(database(db), value, &code);
+    ohlc_status status = registering
+                             ? ohlc_register(database(db), (uint32_t)table, value, &code, &sequence)
+                             : ohlc_resolve(database(db), (uint32_t)table, value, &code);
     if (!check(env, status)) {
         return NULL;
     }
@@ -366,17 +368,39 @@ JNIEXPORT jlongArray JNICALL Java_io_ohlc_Database_00024Native_ticker(JNIEnv* en
 }
 
 JNIEXPORT jbyteArray JNICALL Java_io_ohlc_Database_00024Native_tickerAt(JNIEnv* env, jclass type,
-                                                                        jlong db, jlong code) {
+                                                                        jlong db, jlong table,
+                                                                        jlong code) {
     (void)type;
-    if (!uint32_valid(code)) {
+    if (!uint32_valid(code) || !uint32_valid(table)) {
         check(env, OHLC_INVALID);
         return NULL;
     }
     ohlc_bytes value;
-    if (!check(env, ohlc_ticker(database(db), (uint32_t)code, &value))) {
+    uint8_t buffer[4096];
+    if (!check(env, ohlc_ticker(database(db), (uint32_t)table, (uint32_t)code, buffer, &value))) {
         return NULL;
     }
     return bytes(env, value.data, value.size);
+}
+
+JNIEXPORT jlong JNICALL Java_io_ohlc_Database_00024Native_writeNamed(JNIEnv* env, jclass type,
+                                                                     jlong db, jlong table,
+                                                                     jobject batch, jint size) {
+    (void)type;
+    if (!uint32_valid(table) || batch == NULL || size < 8) {
+        check(env, OHLC_INVALID);
+        return 0;
+    }
+    uint8_t* data = (*env)->GetDirectBufferAddress(env, batch);
+    jlong capacity = (*env)->GetDirectBufferCapacity(env, batch);
+    if (data == NULL || capacity < size) {
+        check(env, OHLC_INVALID);
+        return 0;
+    }
+    uint64_t sequence = 0;
+    check(env, ohlc_submit_named(database(db), (uint32_t)table, data + 4, (size_t)size - 4,
+                                 ohlc_get_u32(data), &sequence));
+    return (jlong)sequence;
 }
 
 JNIEXPORT jlong JNICALL Java_io_ohlc_Database_00024Native_write(JNIEnv* env, jclass type, jlong db,
@@ -461,13 +485,13 @@ JNIEXPORT void JNICALL Java_io_ohlc_Database_00024Native_closeCursor(JNIEnv* env
 }
 
 JNIEXPORT jlong JNICALL Java_io_ohlc_Database_00024Native_parse(JNIEnv* env, jclass type,
-                                                                jboolean days, jbyteArray timezone,
+                                                                jboolean days, jbyteArray zone,
                                                                 jbyteArray time) {
     (void)type;
     ohlc_table_info info = {0};
     info.period_unit = days ? OHLC_DAY : OHLC_MINUTE;
     char input[4096];
-    if (!copy_text(env, timezone, info.timezone, sizeof(info.timezone)) ||
+    if (!copy_text(env, zone, info.timezone, sizeof(info.timezone)) ||
         !copy_text(env, time, input, sizeof(input))) {
         return 0;
     }

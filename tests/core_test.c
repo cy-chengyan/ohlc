@@ -239,9 +239,11 @@ static void test_database(void) {
         int length = snprintf(name, sizeof(name), "S%u", i);
         ohlc_bytes ticker = {name, (size_t)length};
         uint32_t code = 0;
-        OK(ohlc_register(db, ticker, &code, &seq));
+        OK(ohlc_register(db, table.id, ticker, &code, &seq));
+        OK(ohlc_register(db, daily.id, ticker, &code, &seq));
         CHECK(code == i);
-        OK(ohlc_register(db, ticker, &code, &seq));
+        OK(ohlc_register(db, table.id, ticker, &code, &seq));
+        OK(ohlc_register(db, daily.id, ticker, &code, &seq));
         CHECK(code == i);
     }
     const size_t row_count = 33u * 1100u;
@@ -483,7 +485,8 @@ static void test_ordered_batches(void) {
         char name[16];
         length = snprintf(name, sizeof(name), "S%u", i);
         uint32_t code = 0;
-        OK(ohlc_register(db, (ohlc_bytes){name, (size_t)length}, &code, &sequence));
+        OK(ohlc_register(db, ordered.id, (ohlc_bytes){name, (size_t)length}, &code, &sequence));
+        OK(ohlc_register(db, shuffled.id, (ohlc_bytes){name, (size_t)length}, &code, &sequence));
     }
     uint8_t seed[OHLC_WRITE_BYTES];
     for (uint32_t i = 4; i != 0; i--) {
@@ -550,7 +553,7 @@ static void test_wal_retention(void) {
     uint32_t ticker = 0;
     uint64_t sequence = 0;
     OK(ohlc_table_create(db, &definition, &table));
-    OK(ohlc_register(db, (ohlc_bytes){"A", 1}, &ticker, &sequence));
+    OK(ohlc_register(db, table.id, (ohlc_bytes){"A", 1}, &ticker, &sequence));
     /* Tiny internal segments exercise rollover without a large fixture. */
     db->options.wal_segment_bytes = 8192;
     uint8_t rows[100 * OHLC_WRITE_BYTES];
@@ -636,7 +639,7 @@ static void test_drop_recovery(void) {
     OK(ohlc_table_create(db, &definition, &old));
     uint32_t ticker;
     uint64_t sequence;
-    OK(ohlc_register(db, (ohlc_bytes){"AAPL", 4}, &ticker, &sequence));
+    OK(ohlc_register(db, old.id, (ohlc_bytes){"AAPL", 4}, &ticker, &sequence));
     uint8_t record[OHLC_WRITE_BYTES];
     ohlc_row row = value_for(ticker, 1);
     ohlc_write_encode(record, ticker, 1, &row);
@@ -667,7 +670,8 @@ static void test_drop_recovery(void) {
     ohlc_table_info replacement;
     OK(ohlc_table_create(db, &definition, &replacement));
     CHECK(replacement.id > old.id);
-    OK(ohlc_write(db, replacement.id, record, 1, &sequence));
+    ohlc_bytes name = {"AAPL", 4};
+    OK(ohlc_write_named(db, replacement.id, &name, 1, record, 1, &sequence));
     char directory[1024];
     snprintf(directory, sizeof(directory), "%s/tables/%08x", path, old.id);
     OK(ohlc_checkpoint(db));
@@ -712,7 +716,7 @@ static void test_drop_checkpoint_race(void) {
     OK(ohlc_table_create(db, &definition, &table));
     uint32_t ticker;
     uint64_t sequence;
-    OK(ohlc_register(db, (ohlc_bytes){"AAPL", 4}, &ticker, &sequence));
+    OK(ohlc_register(db, table.id, (ohlc_bytes){"AAPL", 4}, &ticker, &sequence));
     uint8_t record[OHLC_WRITE_BYTES];
     ohlc_row row = value_for(ticker, 1);
     ohlc_write_encode(record, ticker, 1, &row);
@@ -746,7 +750,100 @@ static void test_drop_checkpoint_race(void) {
     remove_directory(path);
 }
 
+static void test_table_dictionaries(void) {
+    char path[] = "/tmp/ohlc-dictionary-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    options.cache_bytes = 0;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"us", OHLC_DAY, 1, "", ""};
+    ohlc_table_info us;
+    ohlc_table_info hk;
+    OK(ohlc_table_create(db, &definition, &us));
+    definition.name = "hk";
+    OK(ohlc_table_create(db, &definition, &hk));
+    ohlc_bytes names[] = {{"AAPL", 4}, {"SHARED", 6}, {"NEW", 3}, {"NEW", 3}};
+    uint8_t rows[2 * OHLC_WRITE_BYTES];
+    ohlc_row value = value_for(0, 1);
+    ohlc_write_encode(rows, 0, 1, &value);
+    ohlc_write_encode(rows + OHLC_WRITE_BYTES, 1, 1, &value);
+    uint64_t sequence = 0;
+    OK(ohlc_write_named(db, us.id, names, 2, rows, 2, &sequence));
+    OK(ohlc_write_named(db, hk.id, names + 1, 1, rows, 1, &sequence));
+    uint32_t code = UINT32_MAX;
+    OK(ohlc_resolve(db, us.id, names[1], &code));
+    CHECK(code == 1);
+    OK(ohlc_resolve(db, hk.id, names[1], &code));
+    CHECK(code == 0);
+    CHECK(ohlc_resolve(db, hk.id, names[0], &code) == OHLC_NOT_FOUND);
+    ohlc_stats before;
+    ohlc_get_stats(db, &before);
+    CHECK(before.ticker_count == 3);
+    uint64_t unchanged = sequence;
+    /* Two different batch indexes name the same logical key. Neither name nor
+     * rows may escape the rejected candidate. The next success still gets 1. */
+    CHECK(ohlc_write_named(db, hk.id, names + 2, 2, rows, 2, &sequence) == OHLC_INVALID);
+    CHECK(sequence == unchanged);
+    CHECK(ohlc_resolve(db, hk.id, names[2], &code) == OHLC_NOT_FOUND);
+    ohlc_stats after;
+    ohlc_get_stats(db, &after);
+    CHECK(after.commit_seq == before.commit_seq && after.ticker_count == before.ticker_count);
+    size_t budget = db->allocator.limit;
+    db->allocator.limit = atomic_load(&db->allocator.used);
+    CHECK(ohlc_write_named(db, hk.id, names + 2, 1, rows, 1, &sequence) == OHLC_LIMIT);
+    db->allocator.limit = budget;
+    OK(ohlc_write_named(db, hk.id, names + 2, 1, rows, 1, &sequence));
+    OK(ohlc_resolve(db, hk.id, names[2], &code));
+    CHECK(code == 1);
+    OK(ohlc_close(db));
+    /* Rebuild names and rows from WAL before any data checkpoint exists. */
+    OK(ohlc_open(path, &options, &db));
+    OK(ohlc_resolve(db, hk.id, names[2], &code));
+    CHECK(code == 1);
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_close(db));
+    OK(ohlc_open(path, &options, &db));
+    uint8_t text[4096];
+    ohlc_bytes ticker;
+    OK(ohlc_ticker(db, hk.id, 0, text, &ticker));
+    CHECK(ticker.size == 6 && memcmp(ticker.data, "SHARED", 6) == 0);
+    ohlc_cursor* pinned = NULL;
+    OK(ohlc_cross(db, hk.id, 1, &pinned));
+    OK(ohlc_table_drop(db, hk.id, &sequence));
+    CHECK(ohlc_resolve(db, hk.id, names[1], &code) == OHLC_NOT_FOUND);
+    size_t count = 0;
+    uint8_t results[2 * OHLC_RESULT_BYTES];
+    OK(ohlc_cursor_next(pinned, results, 2, &count));
+    CHECK(count == 2);
+    ohlc_cursor_close(pinned);
+    OK(ohlc_table_create(db, &definition, &hk));
+    OK(ohlc_write_named(db, hk.id, names + 2, 1, rows, 1, &sequence));
+    OK(ohlc_resolve(db, hk.id, names[2], &code));
+    CHECK(code == 0);
+    OK(ohlc_close(db));
+    /* A valid old-version header must fail explicitly, without conversion. */
+    char catalog[512];
+    CHECK(snprintf(catalog, sizeof(catalog), "%s/catalog-000001.dat", path) > 0);
+    int fd = open(catalog, O_RDWR);
+    CHECK(fd >= 0);
+    uint8_t header[OHLC_BLOCK_BYTES];
+    OK(ohlc_read_full(fd, header, sizeof(header), 0));
+    header[7] = '4';
+    ohlc_put_u32(header + 8, 4);
+    ohlc_put_u32(header + 4092, 0);
+    ohlc_put_u32(header + 4092, ohlc_crc32c(0, header, sizeof(header)));
+    OK(ohlc_write_full(fd, header, sizeof(header), 0));
+    CHECK(close(fd) == 0);
+    CHECK(ohlc_open(path, &options, &db) == OHLC_UNSUPPORTED && db == NULL);
+    remove_directory(path);
+}
+
 int main(void) {
+    test_table_dictionaries();
     test_format();
     test_time_tree();
     test_datetime();

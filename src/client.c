@@ -187,7 +187,8 @@ static ohlc_status start_request(ohlc_client* client, uint16_t opcode, const voi
 
 static ohlc_status call(ohlc_client* client, uint16_t opcode, const void* body, size_t size,
                         ohlc_bytes* response) {
-    bool mutation = opcode == 7 || opcode == 8 || opcode == 9 || opcode == 13 || opcode == 14;
+    bool mutation =
+        opcode == 7 || opcode == 8 || opcode == 9 || opcode == 13 || opcode == 14 || opcode == 15;
     uint64_t previous = client->request;
     ohlc_status status = start_request(client, opcode, body, size);
     ohlc_frame frame;
@@ -225,7 +226,7 @@ ohlc_status ohlc_client_connect(const ohlc_connection_options* options, ohlc_cli
     client->info.max_frame_bytes = OHLC_FRAME_LIMIT;
     ohlc_status status = connect_transport(client, options);
     if (status == OHLC_OK) {
-        uint8_t body[4100];
+        uint8_t body[4104];
         ohlc_put_u32(body, (uint32_t)options->token.size);
         if (options->token.size != 0) {
             memcpy(body + 4, options->token.data, options->token.size);
@@ -279,7 +280,7 @@ void ohlc_client_info(const ohlc_client* client, ohlc_connection_info* output) {
 
 ohlc_status ohlc_client_call(ohlc_client* client, uint16_t opcode, const void* body, size_t size,
                              ohlc_bytes* response) {
-    if (client == NULL || response == NULL || opcode < 2 || opcode > 14 || opcode == 5 ||
+    if (client == NULL || response == NULL || opcode < 2 || opcode > 15 || opcode == 5 ||
         opcode == 6) {
         return OHLC_INVALID;
     }
@@ -325,16 +326,17 @@ ohlc_status ohlc_client_checkpoint(ohlc_client* client) {
     return status;
 }
 
-static ohlc_status ticker_call(ohlc_client* client, uint16_t opcode, ohlc_bytes ticker,
-                               uint32_t* code, uint64_t* sequence) {
+static ohlc_status ticker_call(ohlc_client* client, uint16_t opcode, uint32_t table_id,
+                               ohlc_bytes ticker, uint32_t* code, uint64_t* sequence) {
     if (ticker.size == 0 || ticker.size > 4096 || ticker.data == NULL || code == NULL) {
         return OHLC_INVALID;
     }
-    uint8_t body[4100];
-    ohlc_put_u32(body, (uint32_t)ticker.size);
-    memcpy(body + 4, ticker.data, ticker.size);
+    uint8_t body[4104];
+    ohlc_put_u32(body, table_id);
+    ohlc_put_u32(body + 4, (uint32_t)ticker.size);
+    memcpy(body + 8, ticker.data, ticker.size);
     ohlc_bytes response;
-    ohlc_status status = ohlc_client_call(client, opcode, body, ticker.size + 4, &response);
+    ohlc_status status = ohlc_client_call(client, opcode, body, ticker.size + 8, &response);
     if (status == OHLC_OK) {
         if (response.size != (opcode == 3 ? 4u : 12u)) {
             return fail_connection(client, opcode == 3 ? OHLC_CORRUPT : OHLC_OUTCOME_UNKNOWN);
@@ -347,13 +349,57 @@ static ohlc_status ticker_call(ohlc_client* client, uint16_t opcode, ohlc_bytes 
     return status;
 }
 
-ohlc_status ohlc_client_resolve(ohlc_client* client, ohlc_bytes ticker, uint32_t* code) {
-    return ticker_call(client, 3, ticker, code, NULL);
+ohlc_status ohlc_client_resolve(ohlc_client* client, uint32_t table_id, ohlc_bytes ticker,
+                                uint32_t* code) {
+    return ticker_call(client, 3, table_id, ticker, code, NULL);
 }
 
-ohlc_status ohlc_client_register(ohlc_client* client, ohlc_bytes ticker, uint32_t* code,
-                                 uint64_t* sequence) {
-    return ticker_call(client, 7, ticker, code, sequence);
+ohlc_status ohlc_client_register(ohlc_client* client, uint32_t table_id, ohlc_bytes ticker,
+                                 uint32_t* code, uint64_t* sequence) {
+    return ticker_call(client, 7, table_id, ticker, code, sequence);
+}
+
+ohlc_status ohlc_client_write_named(ohlc_client* client, uint32_t table_id,
+                                    const ohlc_bytes* tickers, size_t ticker_count,
+                                    const void* rows, size_t count, uint64_t* sequence) {
+    if (client == NULL || sequence == NULL) {
+        return OHLC_INVALID;
+    }
+    if (count > client->info.max_write_rows) {
+        return OHLC_LIMIT;
+    }
+    ohlc_allocator allocator = {.used = 0, .limit = OHLC_FRAME_LIMIT * 2u};
+    uint8_t* payload = NULL;
+    size_t size = 0;
+    ohlc_status status =
+        ohlc_named_pack(&allocator, tickers, ticker_count, rows, count, &payload, &size);
+    if (status != OHLC_OK) {
+        return status;
+    }
+    if (size + 8u > client->info.max_frame_bytes) {
+        ohlc_free(&allocator, payload);
+        return OHLC_LIMIT;
+    }
+    uint8_t* body = ohlc_alloc(&allocator, size + 8u);
+    if (body == NULL) {
+        ohlc_free(&allocator, payload);
+        return OHLC_LIMIT;
+    }
+    ohlc_put_u32(body, table_id);
+    ohlc_put_u32(body + 4, (uint32_t)count);
+    memcpy(body + 8, payload, size);
+    ohlc_bytes response;
+    status = ohlc_client_call(client, 15, body, size + 8u, &response);
+    if (status == OHLC_OK) {
+        if (response.size != 8) {
+            status = fail_connection(client, OHLC_OUTCOME_UNKNOWN);
+        } else {
+            *sequence = ohlc_get_u64(response.data);
+        }
+    }
+    ohlc_free(&allocator, body);
+    ohlc_free(&allocator, payload);
+    return status;
 }
 
 ohlc_status ohlc_client_table_open(ohlc_client* client, const char* name, ohlc_table_info* output) {

@@ -38,12 +38,13 @@ const shell_help ohlc_shell_commands[] = {
      "drop bars_3m;"},
     {"describe", "describe TABLE", "Show immutable table metadata and fixed field positions.",
      "describe bars_3m;"},
-    {"tickers", "tickers [PREFIX]", "List exact ticker bytes, escaped for safe display.",
-     "tickers AA;"},
-    {"resolve", "resolve TICKER", "Resolve an existing ticker without registering it.",
-     "resolve \"AAPL\";"},
-    {"register", "register TICKER", "Durably register a ticker; write access required.",
-     "register \"AAPL\";"},
+    {"tickers", "tickers TABLE [PREFIX]", "List exact ticker bytes, escaped for safe display.",
+     "tickers bars_3m AA;"},
+    {"resolve", "resolve TABLE TICKER", "Resolve an existing ticker without registering it.",
+     "resolve bars_3m \"AAPL\";"},
+    {"register", "register TABLE TICKER",
+     "Optionally reserve a table-local ticker code; write access required.",
+     "register bars_3m \"AAPL\";"},
     {"series", "series TABLE TICKER from START to END [options]",
      "Read [START, END) ordered by real time. END may be @4294967296. Read access required.",
      "series bars_3m AAPL from \"20260901 09:30:00\" to \"20260901 16:00:00\" --all;"},
@@ -51,15 +52,17 @@ const shell_help ohlc_shell_commands[] = {
      "cross bars_3m \"20260901 09:30:00\";\ncross bars_3m @29803050 --format csv --output "
      "cross.csv;"},
     {"insert", "insert TABLE TICKER TIME OPEN HIGH LOW CLOSE VOLUME AMOUNT ADJUST_FACTOR",
-     "Atomically insert/replace all seven fields. Table and ticker must exist; write access "
+     "Atomically insert/replace all seven fields. Table must exist; missing tickers are created "
+     "atomically; write access "
      "required.",
      "insert bars_3m AAPL \"20260901 09:30:00\" 10000 10100 9950 10080 1200 12100000 1000000;"},
     {"put", "put TABLE TICKER TIME OPEN HIGH LOW CLOSE VOLUME AMOUNT ADJUST_FACTOR",
      "Alias of insert.", "help insert;"},
     {"import", "import TABLE PATH [--format tsv|csv] [--batch-rows N] [--no-header]",
      "Import nine columns: ticker,time,open,high,low,close,volume,amount,adjust_factor.\n"
-     "Default: TSV, matching header, 20000 rows/batch. Registers missing tickers.\n"
-     "Stops on the first error. Earlier committed batches and registrations remain durable.",
+     "Default: TSV, matching header, 20000 rows/batch. Creates missing tickers atomically with "
+     "each batch.\n"
+     "Stops on the first error. Earlier committed batches remain durable.",
      "import bars_3m bars.tsv --format tsv --batch-rows 20000;"},
     {"source", "source PATH", "Run a local script; stop that script on its first failure.",
      "source queries.ohlc;"},
@@ -77,6 +80,7 @@ typedef struct symbol {
     struct symbol* next;
     size_t size;
     uint32_t code;
+    uint32_t table_id;
     uint8_t bytes[];
 } symbol;
 
@@ -234,13 +238,14 @@ static uint32_t symbol_bucket(const shell_word* ticker) {
     return hash & 1023u;
 }
 
-static void cache_symbol(shell* state, const shell_word* ticker, uint32_t code) {
+static void cache_symbol(shell* state, uint32_t table_id, const shell_word* ticker, uint32_t code) {
     if (state->symbol_bytes + sizeof(symbol) + ticker->size + 1 > 16u * 1024u * 1024u) {
         return;
     }
     uint32_t bucket = symbol_bucket(ticker);
     for (const symbol* entry = state->symbols[bucket]; entry != NULL; entry = entry->next) {
-        if (entry->size == ticker->size && memcmp(entry->bytes, ticker->text, ticker->size) == 0) {
+        if (entry->table_id == table_id && entry->size == ticker->size &&
+            memcmp(entry->bytes, ticker->text, ticker->size) == 0) {
             return;
         }
     }
@@ -248,6 +253,7 @@ static void cache_symbol(shell* state, const shell_word* ticker, uint32_t code) 
     if (entry == NULL) {
         return;
     }
+    entry->table_id = table_id;
     entry->size = ticker->size;
     entry->code = code;
     memcpy(entry->bytes, ticker->text, ticker->size);
@@ -257,27 +263,20 @@ static void cache_symbol(shell* state, const shell_word* ticker, uint32_t code) 
     state->symbol_bytes += sizeof(*entry) + ticker->size + 1;
 }
 
-static ohlc_status resolve(shell* state, const shell_word* ticker, bool allow_register,
+static ohlc_status resolve(shell* state, uint32_t table_id, const shell_word* ticker,
                            uint32_t* code) {
     for (const symbol* entry = state->symbols[symbol_bucket(ticker)]; entry != NULL;
          entry = entry->next) {
-        if (entry->size == ticker->size && memcmp(entry->bytes, ticker->text, ticker->size) == 0) {
+        if (entry->table_id == table_id && entry->size == ticker->size &&
+            memcmp(entry->bytes, ticker->text, ticker->size) == 0) {
             *code = entry->code;
             return OHLC_OK;
         }
     }
     ohlc_bytes bytes = {ticker->text, ticker->size};
-    ohlc_status status = ohlc_client_resolve(state->client, bytes, code);
-    if (status == OHLC_NOT_FOUND && allow_register) {
-        uint64_t sequence;
-        status = ohlc_client_register(state->client, bytes, code, &sequence);
-        if (status == OHLC_OK) {
-            fprintf(stderr, "Registered ticker_code=%" PRIu32 " commit_seq=%" PRIu64 "\n", *code,
-                    sequence);
-        }
-    }
+    ohlc_status status = ohlc_client_resolve(state->client, table_id, bytes, code);
     if (status == OHLC_OK) {
-        cache_symbol(state, ticker, *code);
+        cache_symbol(state, table_id, ticker, *code);
     }
     return status;
 }
@@ -313,15 +312,18 @@ static void print_definition(const ohlc_table_info* table) {
     fputc('\n', stdout);
 }
 
-static ohlc_status list_metadata(shell* state, bool tables, const shell_word* prefix) {
+static ohlc_status list_metadata(shell* state, bool tables, uint32_t table_id,
+                                 const shell_word* prefix) {
     uint64_t start = tables ? 1 : 0;
     while (start <= UINT32_MAX) {
-        uint8_t request[8];
-        ohlc_put_u32(request, (uint32_t)start);
-        ohlc_put_u32(request + 4, 128);
+        uint8_t request[12];
+        size_t prefix_bytes = tables ? 0u : 4u;
+        ohlc_put_u32(request, table_id);
+        ohlc_put_u32(request + prefix_bytes, (uint32_t)start);
+        ohlc_put_u32(request + prefix_bytes + 4, 128);
         ohlc_bytes response;
         ohlc_status status =
-            ohlc_client_call(state->client, tables ? 11 : 4, request, 8, &response);
+            ohlc_client_call(state->client, tables ? 11 : 4, request, 8u + prefix_bytes, &response);
         if (status != OHLC_OK) {
             return status;
         }
@@ -358,7 +360,7 @@ static ohlc_status list_metadata(shell* state, bool tables, const shell_word* pr
                     return OHLC_CORRUPT;
                 }
                 shell_word ticker = {(char*)bytes + position, length};
-                cache_symbol(state, &ticker, code);
+                cache_symbol(state, table_id, &ticker, code);
                 if (prefix == NULL || (prefix->size <= length &&
                                        memcmp(prefix->text, ticker.text, prefix->size) == 0)) {
                     printf("%" PRIu32 "\t", code);
@@ -504,7 +506,7 @@ static ohlc_status query(shell* state, const shell_command* command, bool series
             end = status == OHLC_OK ? last : 0;
         }
         if (status == OHLC_OK) {
-            status = resolve(state, &command->words[2], false, &ticker);
+            status = resolve(state, table.id, &command->words[2], &ticker);
         }
     }
     if (status != OHLC_OK) {
@@ -639,18 +641,15 @@ static ohlc_status insert_row(shell* state, const shell_command* command) {
     ohlc_table_info table;
     ohlc_status status = open_table(state, &command->words[1], &table);
     uint32_t key;
-    uint32_t ticker;
     if (status == OHLC_OK) {
         status = parse_time(&table, &command->words[3], &key);
     }
     if (status == OHLC_OK) {
-        status = resolve(state, &command->words[2], false, &ticker);
-    }
-    if (status == OHLC_OK) {
         uint8_t record[OHLC_WRITE_BYTES];
-        ohlc_write_encode(record, ticker, key, &row);
+        ohlc_write_encode(record, 0, key, &row);
         uint64_t sequence;
-        status = ohlc_client_write(state->client, table.id, record, 1, &sequence);
+        ohlc_bytes ticker = {command->words[2].text, command->words[2].size};
+        status = ohlc_client_write_named(state->client, table.id, &ticker, 1, record, 1, &sequence);
         if (status == OHLC_OK) {
             fprintf(stderr, "Committed rows=1 commit_seq=%" PRIu64 "\n", sequence);
         }
@@ -694,8 +693,10 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
     }
     FILE* file = fopen(command->words[2].text, "r");
     uint8_t* records = malloc((size_t)batch * OHLC_WRITE_BYTES);
+    ohlc_bytes* names = calloc((size_t)batch, sizeof(*names));
     shell_command* fields = malloc(sizeof(*fields));
-    if (file == NULL || records == NULL || fields == NULL) {
+    if (file == NULL || records == NULL || fields == NULL || names == NULL) {
+        free(names);
         free(records);
         free(fields);
         if (file != NULL) {
@@ -707,6 +708,7 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
     uint64_t batches = 0;
     uint64_t record_number = 0;
     size_t pending = 0;
+    size_t named_bytes = 4;
     bool eof = false;
     while (status == OHLC_OK && !eof && !ohlc_shell_interrupted) {
         status = ohlc_shell_text_record(file, csv, fields, &eof);
@@ -722,11 +724,11 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
             break;
         }
         if (header) {
-            static const char* names[] = {"ticker", "time",   "open",   "high",         "low",
-                                          "close",  "volume", "amount", "adjust_factor"};
+            static const char* columns[] = {"ticker", "time",   "open",   "high",         "low",
+                                            "close",  "volume", "amount", "adjust_factor"};
             for (size_t i = 0; i < 9; i++) {
-                if (fields->words[i].size != strlen(names[i]) ||
-                    memcmp(fields->words[i].text, names[i], strlen(names[i])) != 0) {
+                if (fields->words[i].size != strlen(columns[i]) ||
+                    memcmp(fields->words[i].text, columns[i], strlen(columns[i])) != 0) {
                     status = OHLC_INVALID;
                     break;
                 }
@@ -734,7 +736,6 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
             header = false;
             continue;
         }
-        uint32_t ticker;
         uint32_t key;
         ohlc_row row;
         if (!ohlc_shell_row(fields->words + 2, &row)) {
@@ -742,20 +743,40 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
             break;
         }
         status = parse_time(&table, &fields->words[1], &key);
+        size_t length = fields->words[0].size;
+        if (status == OHLC_OK && (length == 0 || length > 4096)) {
+            status = OHLC_INVALID;
+        }
+        if (status == OHLC_OK && named_bytes + length + 4u + (pending + 1u) * OHLC_WRITE_BYTES >
+                                     OHLC_FRAME_LIMIT - 104u) {
+            status = OHLC_LIMIT;
+        }
         if (status == OHLC_OK) {
-            status = resolve(state, &fields->words[0], true, &ticker);
+            char* name = malloc(length);
+            if (name == NULL) {
+                status = OHLC_LIMIT;
+            } else {
+                memcpy(name, fields->words[0].text, length);
+                names[pending] = (ohlc_bytes){name, length};
+                named_bytes += length + 4u;
+            }
         }
         if (status != OHLC_OK) {
             break;
         }
-        ohlc_write_encode(records + pending * OHLC_WRITE_BYTES, ticker, key, &row);
+        ohlc_write_encode(records + pending * OHLC_WRITE_BYTES, (uint32_t)pending, key, &row);
         pending++;
         if (pending == batch) {
             uint64_t sequence;
-            status = ohlc_client_write(state->client, table.id, records, pending, &sequence);
+            status = ohlc_client_write_named(state->client, table.id, names, pending, records,
+                                             pending, &sequence);
             if (status == OHLC_OK) {
                 confirmed += pending;
+                for (size_t i = 0; i < pending; i++) {
+                    free((void*)names[i].data);
+                }
                 pending = 0;
+                named_bytes = 4;
                 batches++;
                 fprintf(stderr,
                         "Import confirmed batches=%" PRIu64 " rows=%" PRIu64
@@ -772,18 +793,27 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
     }
     if (status == OHLC_OK && pending != 0) {
         uint64_t sequence;
-        status = ohlc_client_write(state->client, table.id, records, pending, &sequence);
+        status = ohlc_client_write_named(state->client, table.id, names, pending, records, pending,
+                                         &sequence);
         if (status == OHLC_OK) {
             confirmed += pending;
             batches++;
+            for (size_t i = 0; i < pending; i++) {
+                free((void*)names[i].data);
+            }
             pending = 0;
         }
     }
     fprintf(stderr,
             "Import %s: confirmed_batches=%" PRIu64 " confirmed_rows=%" PRIu64
-            " input_record=%" PRIu64 " pending_rows=%zu; registrations remain committed.\n",
+            " input_record=%" PRIu64
+            " pending_rows=%zu; names commit with each successful batch.\n",
             status == OHLC_OK ? "complete" : "stopped", batches, confirmed, record_number, pending);
     fclose(file);
+    for (size_t i = 0; i < pending; i++) {
+        free((void*)names[i].data);
+    }
+    free(names);
     free(records);
     free(fields);
     return status;
@@ -912,7 +942,7 @@ static ohlc_status execute(shell* state, const shell_command* command) {
                 fprintf(stderr, "%02x", info.uuid[i]);
             }
             fprintf(stderr,
-                    " protocol=3 access=%s max_frame=%" PRIu32 " max_rows=%" PRIu32
+                    " protocol=4 access=%s max_frame=%" PRIu32 " max_rows=%" PRIu32
                     " query_ms=%" PRIu32 "\n",
                     (info.capabilities & OHLC_CAP_WRITE) != 0 ? "read/write" : "read",
                     info.max_frame_bytes, info.max_write_rows, info.max_query_ms);
@@ -1004,10 +1034,15 @@ static ohlc_status execute(shell* state, const shell_command* command) {
         return drop_table(state, command);
     }
     if (word_is(word, "tables") && command->count == 1) {
-        return list_metadata(state, true, NULL);
+        return list_metadata(state, true, 0, NULL);
     }
-    if (word_is(word, "tickers") && command->count <= 2) {
-        return list_metadata(state, false, command->count == 2 ? word + 1 : NULL);
+    if (word_is(word, "tickers") && command->count >= 2 && command->count <= 3) {
+        ohlc_table_info table;
+        ohlc_status status = open_table(state, word + 1, &table);
+        if (status != OHLC_OK) {
+            return status;
+        }
+        return list_metadata(state, false, table.id, command->count == 3 ? word + 2 : NULL);
     }
     if (word_is(word, "describe") && command->count == 2) {
         ohlc_table_info table;
@@ -1019,19 +1054,24 @@ static ohlc_status execute(shell* state, const shell_command* command) {
         }
         return status;
     }
-    if ((word_is(word, "resolve") || word_is(word, "register")) && command->count == 2) {
+    if ((word_is(word, "resolve") || word_is(word, "register")) && command->count == 3) {
         uint32_t code;
-        ohlc_status status;
+        ohlc_table_info table;
+        ohlc_status status = open_table(state, word + 1, &table);
+        if (status != OHLC_OK) {
+            return status;
+        }
         if (word_is(word, "register")) {
             uint64_t sequence;
-            status = ohlc_client_register(state->client, (ohlc_bytes){word[1].text, word[1].size},
-                                          &code, &sequence);
+            status =
+                ohlc_client_register(state->client, table.id,
+                                     (ohlc_bytes){word[2].text, word[2].size}, &code, &sequence);
             if (status == OHLC_OK) {
                 fprintf(stderr, "Registered commit_seq=%" PRIu64 "\n", sequence);
-                cache_symbol(state, word + 1, code);
+                cache_symbol(state, table.id, word + 2, code);
             }
         } else {
-            status = resolve(state, word + 1, false, &code);
+            status = resolve(state, table.id, word + 2, &code);
         }
         if (status == OHLC_OK) {
             printf("%" PRIu32 "\n", code);

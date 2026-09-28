@@ -73,12 +73,12 @@ def python_contract(path, library):
         require_error(4, lambda: Database(path, library=library))
         minute = db.create("bars_3m", period="3m", timezone="Asia/Shanghai", description="UTF-8 \U0001f4c8")
         day = db.create("bars_5d", period="5d")
-        code, _ = db.register("AAPL")
-        binary, _ = db.register(BINARY)
-        assert list(db.dictionary()) == [(code, b"AAPL"), (binary, BINARY)]
+        code, _ = db.register(1, "AAPL")
+        binary, _ = db.register(1, BINARY)
+        assert list(db.dictionary(1)) == [(code, b"AAPL"), (binary, BINARY)]
         assert [item.name for item in db.tables()] == ["bars_3m", "bars_5d"]
         require_error(11, lambda: db.create("bars_3m", timezone="UTC"))
-        require_error(2, lambda: db.resolve("MISSING"))
+        require_error(2, lambda: db.resolve(1, "MISSING"))
         key = minute.time_key("20260901 09:30:00")
         assert key == minute.time_key("2026-09-01T01:30:00Z")
         assert minute.time_key(minute.format_time(0xffffffff)) == 0xffffffff
@@ -150,7 +150,7 @@ def table_deletion(path, library):
     with Database(path, create=True, options=options, library=library) as db:
         keep = db.create("keep", period="1d")
         old = db.create("replace", period="1d")
-        code, _ = db.register("AAPL")
+        code, _ = db.register(1, "AAPL")
         keep.insert("AAPL", "20260901", EXTREMES)
         old.insert("AAPL", "20260901", EXTREMES)
         db.checkpoint()
@@ -240,7 +240,7 @@ def main():
                 table = db.table("java_day")
                 assert table.description == "JNI \U0001f680"
                 rows = results(table.cross("20260901"))
-                assert rows == [(db.resolve("JAVA"), *EXTREMES)]
+                assert rows == [(db.table("java_day").resolve("JAVA"), *EXTREMES)]
                 assert len(results(table.series("JAVA", "20260901", "20260905"))) == 4
     print("embedded Python, snapshots, buffer ownership, close races and file recovery: OK")
 

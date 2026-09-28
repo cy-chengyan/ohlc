@@ -219,5 +219,5 @@
   <text x="1626.75" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">uint32  ·  4 B</text>
   <text x="1779.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">32</text>
   <text x="116.00" y="1340.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">32 B 内不保存表、证券、时间键、内部编号或字段名；七字段原样保存，不压缩。</text>
-  <text x="65.00" y="1430.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0.1.0-beta.1 · 磁盘格式 4  |  行编码为小端；amount 从偏移 20 开始，不能直接映射 C 结构体。</text>
+  <text x="65.00" y="1430.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0.1.0-beta.1 · 磁盘格式 5  |  行编码为小端；amount 从偏移 20 开始，不能直接映射 C 结构体。</text>
 </svg>

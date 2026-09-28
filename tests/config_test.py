@@ -77,7 +77,7 @@ def main():
                 table = client.create("daily", period="1d")
                 client.create("five_day", period="5d")
                 require_error(3, lambda: client.create("over_limit", period="1d"))
-                client.register("AAPL")
+                client.register(1, "AAPL")
                 table.insert("AAPL", "20260901", (1, 2, 3, 4, 5, 6, 7))
         finally:
             process.send_signal(signal.SIGTERM)

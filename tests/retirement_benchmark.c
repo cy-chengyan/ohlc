@@ -144,8 +144,8 @@ static void register_range(benchmark* state, uint32_t first, uint32_t end) {
         require(length > 0 && (size_t)length < sizeof(ticker), "Ticker formatting failed");
         uint32_t actual = UINT32_MAX;
         uint64_t sequence = 0;
-        check(ohlc_client_register(state->client, (ohlc_bytes){ticker, (size_t)length}, &actual,
-                                   &sequence),
+        check(ohlc_client_register(state->client, state->table.id,
+                                   (ohlc_bytes){ticker, (size_t)length}, &actual, &sequence),
               "Register ticker");
         require(actual == stock, "Unstable or unexpected ticker code");
     }

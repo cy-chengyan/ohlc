@@ -44,9 +44,6 @@ int main(int argc, char** argv) {
     ohlc_bytes ticker = {"AAPL", 4};
     uint32_t code = 0;
     uint64_t sequence = 0;
-    if (!successful(ohlc_register(db, ticker, &code, &sequence))) {
-        goto cleanup;
-    }
     const char* times[] = {"20260901 09:30:00", "20260901 09:33:00", "20260901 09:36:00"};
     uint8_t batch[3 * OHLC_WRITE_BYTES];
     uint32_t keys[3];
@@ -58,7 +55,8 @@ int main(int argc, char** argv) {
         row.close += (int32_t)i;
         ohlc_write_encode(batch + i * OHLC_WRITE_BYTES, code, keys[i], &row);
     }
-    if (!successful(ohlc_write(db, table.id, batch, 3, &sequence)) ||
+    if (!successful(ohlc_write_named(db, table.id, &ticker, 1, batch, 3, &sequence)) ||
+        !successful(ohlc_resolve(db, table.id, ticker, &code)) ||
         !successful(ohlc_series(db, table.id, code, keys[0], (uint64_t)keys[2] + 1, &cursor))) {
         goto cleanup;
     }

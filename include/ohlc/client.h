@@ -43,7 +43,7 @@ bool ohlc_client_connected(const ohlc_client* client);
  * single-owner caller may use shutdown(fd, SHUT_RDWR) to interrupt I/O. */
 int ohlc_client_socket(const ohlc_client* client);
 
-/* Low-level, single-frame metadata RPC. Opcodes 2..4 and 7..14 only.
+/* Low-level, single-frame metadata RPC. Opcodes 2..4 and 7..15 only.
  * The returned little-endian body is borrowed until the next client operation.
  * Malformed or truncated responses break the connection. A mutation whose
  * outcome cannot be established returns OHLC_OUTCOME_UNKNOWN. */
@@ -55,9 +55,14 @@ ohlc_status ohlc_client_table_create(ohlc_client* client, const ohlc_table_defin
 /* Requires write access. Deletes this ID, never a replacement with the same
  * name. An uncertain acknowledgement returns OHLC_OUTCOME_UNKNOWN. */
 ohlc_status ohlc_client_table_drop(ohlc_client* client, uint32_t table_id, uint64_t* sequence);
-ohlc_status ohlc_client_resolve(ohlc_client* client, ohlc_bytes ticker, uint32_t* code);
-ohlc_status ohlc_client_register(ohlc_client* client, ohlc_bytes ticker, uint32_t* code,
-                                 uint64_t* sequence);
+ohlc_status ohlc_client_resolve(ohlc_client* client, uint32_t table_id, ohlc_bytes ticker,
+                                uint32_t* code);
+ohlc_status ohlc_client_register(ohlc_client* client, uint32_t table_id, ohlc_bytes ticker,
+                                 uint32_t* code, uint64_t* sequence);
+/* Named batches have the same atomicity and ownership as ohlc_write_named. */
+ohlc_status ohlc_client_write_named(ohlc_client* client, uint32_t table_id,
+                                    const ohlc_bytes* tickers, size_t ticker_count,
+                                    const void* rows, size_t count, uint64_t* sequence);
 ohlc_status ohlc_client_write(ohlc_client* client, uint32_t table_id, const void* encoded_rows,
                               size_t count, uint64_t* sequence);
 /* Stats require read access; checkpoint requires write access. Counters are

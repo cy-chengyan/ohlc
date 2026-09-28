@@ -80,7 +80,7 @@ def _check_abi(lib):
         raise RuntimeError("The native library predates the supported ohlc ABI") from error
     version.argtypes = []
     version.restype = C.c_uint32
-    if version() != 1:
+    if version() != 2:
         raise RuntimeError("Incompatible ohlc native ABI; install matching libraries and bindings")
 
 
@@ -99,8 +99,11 @@ def _library(path):
         "ohlc_client_call": ([pointer, C.c_uint16, pointer, C.c_size_t, C.POINTER(_Bytes)], C.c_int),
         "ohlc_client_table_open": ([pointer, C.c_char_p, C.POINTER(_Table)], C.c_int),
         "ohlc_client_table_create": ([pointer, C.POINTER(_Definition), C.POINTER(_Table)], C.c_int),
-        "ohlc_client_resolve": ([pointer, _Bytes, C.POINTER(C.c_uint32)], C.c_int),
-        "ohlc_client_register": ([pointer, _Bytes, C.POINTER(C.c_uint32), C.POINTER(C.c_uint64)], C.c_int),
+        "ohlc_client_resolve": ([pointer, C.c_uint32, _Bytes, C.POINTER(C.c_uint32)], C.c_int),
+        "ohlc_client_register": ([pointer, C.c_uint32, _Bytes, C.POINTER(C.c_uint32),
+                                  C.POINTER(C.c_uint64)], C.c_int),
+        "ohlc_client_write_named": ([pointer, C.c_uint32, C.POINTER(_Bytes), C.c_size_t,
+                                      pointer, C.c_size_t, C.POINTER(C.c_uint64)], C.c_int),
         "ohlc_client_write": ([pointer, C.c_uint32, pointer, C.c_size_t, C.POINTER(C.c_uint64)], C.c_int),
         "ohlc_client_series": ([pointer, C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint64], C.c_int),
         "ohlc_client_cross": ([pointer, C.c_uint32, C.c_uint32], C.c_int),
@@ -243,45 +246,50 @@ class Connection:
             if len(response) != 8 or struct.unpack("<Q", response)[0] == 0:
                 self.close()
                 raise OutcomeUnknown(9, "Malformed table deletion acknowledgement")
+            for key in list(self._cache):
+                if key[0] == table.id:
+                    self._cache_bytes -= len(key[1]) + 128
+                    del self._cache[key]
             return struct.unpack("<Q", response)[0]
 
-    def _ticker_call(self, ticker, register):
+    def _ticker_call(self, table, ticker, register):
         ticker = _ticker(ticker)
+        key = (_uint(table), ticker)
         with self._lock:
             self._require_open()
-            if not register and ticker in self._cache:
-                self._cache.move_to_end(ticker)
-                return self._cache[ticker]
+            if not register and key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
             buffer = C.create_string_buffer(ticker)
             data = _Bytes(C.addressof(buffer), len(ticker))
             code = C.c_uint32()
             sequence = C.c_uint64()
             if register:
-                status = self._lib.ohlc_client_register(self._handle, data, C.byref(code),
+                status = self._lib.ohlc_client_register(self._handle, _uint(table), data, C.byref(code),
                                                        C.byref(sequence))
             else:
-                status = self._lib.ohlc_client_resolve(self._handle, data, C.byref(code))
+                status = self._lib.ohlc_client_resolve(self._handle, _uint(table), data, C.byref(code))
             self._check(status)
             if self._cache_entries:
-                if ticker not in self._cache:
+                if key not in self._cache:
                     self._cache_bytes += len(ticker) + 128
-                self._cache[ticker] = code.value
-                self._cache.move_to_end(ticker)
+                self._cache[key] = code.value
+                self._cache.move_to_end(key)
                 while len(self._cache) > self._cache_entries or self._cache_bytes > 16 * 1024 * 1024:
                     evicted, _ = self._cache.popitem(last=False)
-                    self._cache_bytes -= len(evicted) + 128
+                    self._cache_bytes -= len(evicted[1]) + 128
             return (code.value, sequence.value) if register else code.value
 
-    def register(self, ticker):
-        return self._ticker_call(ticker, True)
+    def register(self, table, ticker):
+        return self._ticker_call(table, ticker, True)
 
-    def resolve(self, ticker):
-        return self._ticker_call(ticker, False)
+    def resolve(self, table, ticker):
+        return self._ticker_call(table, ticker, False)
 
-    def dictionary(self):
+    def dictionary(self, table):
         start = 0
         while start <= 0xffffffff:
-            body = self._call(4, struct.pack("<II", start, 128))
+            body = self._call(4, struct.pack("<III", _uint(table), start, 128))
             reader = _Reader(body)
             reader.unpack("<Q")
             count, = reader.unpack("<I")
@@ -369,6 +377,29 @@ class Table:
         self.period = f"{info.period}{'m' if info.unit == 1 else 'd'}"
         self.created_seq = info.created_seq
 
+    def resolve(self, ticker):
+        return self.connection.resolve(self.id, ticker)
+
+    def register(self, ticker):
+        """Optionally reserve a table-local code; normal writes do not require this."""
+        return self.connection.register(self.id, ticker)
+
+    def dictionary(self):
+        return self.connection.dictionary(self.id)
+
+    def _write_named(self, tickers, encoded):
+        storage = (C.c_ubyte * len(encoded)).from_buffer(encoded)
+        buffers = [C.create_string_buffer(ticker) for ticker in tickers]
+        names = (_Bytes * len(buffers))(*[
+            _Bytes(C.addressof(buffer), len(buffer) - 1) for buffer in buffers])
+        sequence = C.c_uint64()
+        with self.connection._lock:
+            self.connection._require_open()
+            self.connection._check(self.connection._lib.ohlc_client_write_named(
+                self.connection._handle, self.id, names, len(names), storage,
+                len(encoded) // 40, C.byref(sequence)))
+        return sequence.value
+
     def time_key(self, value):
         if isinstance(value, int):
             return _uint(value)
@@ -402,11 +433,19 @@ class Table:
     def write(self, rows):
         """Commit one batch of (ticker, date_or_datetime, seven_integer_values).
 
-        All tickers must already be registered. The method never splits an
-        atomic batch or silently registers symbols as a side effect.
+        Missing names are created atomically with the rows. A rejected batch
+        creates no names. The method never splits a transaction.
         """
         encoded = bytearray()
+        names = {}
+        named_size = 4
         for ticker, time, values in rows:
+            ticker = _ticker(ticker)
+            if ticker not in names:
+                names[ticker] = len(names)
+                named_size += 4 + len(ticker)
+            if named_size + len(encoded) + 40 > (16 << 20) - 104:
+                raise ValueError("Named batch exceeds frame limit")
             if len(encoded) // 40 >= self.connection.max_write_rows:
                 raise ValueError("Batch exceeds max_write_rows")
             if len(values) != 7:
@@ -415,11 +454,13 @@ class Table:
                 if not isinstance(value, int) or isinstance(value, bool):
                     raise ValueError("All seven fields must be integers")
             try:
-                encoded.extend(struct.pack("<IIiiiiIQI", self.connection.resolve(ticker),
+                encoded.extend(struct.pack("<IIiiiiIQI", names[ticker],
                                            self.time_key(time), *values))
             except struct.error as error:
                 raise ValueError(str(error)) from error
-        return self.write_encoded(encoded)
+        if not encoded:
+            raise ValueError("Expected a nonempty batch")
+        return self._write_named(list(names), encoded)
 
     def insert(self, ticker, time, values):
         return self.write([(ticker, time, values)])
@@ -428,7 +469,7 @@ class Table:
         end = 1 << 32 if end == "@4294967296" or end == 1 << 32 else self.time_key(end)
         with self.connection._lock:
             self.connection._require_open()
-            code = self.connection.resolve(ticker)
+            code = self.resolve(ticker)
             self.connection._check(self.connection._lib.ohlc_client_series(
                 self.connection._handle, self.id, code, self.time_key(start), end))
         return _Query(self.connection)

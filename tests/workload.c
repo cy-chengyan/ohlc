@@ -187,7 +187,8 @@ static void load(workload* work, uint32_t first, uint32_t end) {
             int size = snprintf(ticker, sizeof(ticker), "S%05u", i);
             uint32_t code;
             uint64_t sequence;
-            require(ohlc_register(work->db, (ohlc_bytes){ticker, (size_t)size}, &code, &sequence),
+            require(ohlc_register(work->db, work->table.id, (ohlc_bytes){ticker, (size_t)size},
+                                  &code, &sequence),
                     "register");
             if (code != i) {
                 fputs("Unexpected ticker code\n", stderr);

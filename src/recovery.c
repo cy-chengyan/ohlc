@@ -42,7 +42,7 @@ static ohlc_status record_write(ohlc_db* db, int fd, uint64_t* end, uint32_t typ
     if (record == NULL) {
         return OHLC_LIMIT;
     }
-    memcpy(record, "OIR4", 4);
+    memcpy(record, "OIR5", 4);
     ohlc_put_u32(record + 4, type);
     ohlc_put_u32(record + 8, (uint32_t)size);
     ohlc_put_u64(record + 16, db->checkpoint_generation + 1);
@@ -86,7 +86,7 @@ static ohlc_status record_read(ohlc_db* db, int fd, uint64_t offset, uint64_t pa
     }
     *size = ohlc_get_u32(header + 8);
     size_t total = (32u + *size + 7u) & ~(size_t)7u;
-    if (memcmp(header, "OIR4", 4) != 0 || ohlc_get_u32(header + 4) != type ||
+    if (memcmp(header, "OIR5", 4) != 0 || ohlc_get_u32(header + 4) != type ||
         *size > OHLC_RECORD_LIMIT || total > parent - offset || ohlc_get_u64(header + 24) != 0) {
         return OHLC_CORRUPT;
     }
@@ -537,8 +537,92 @@ static ohlc_status flush_radix(ohlc_db* db, ohlc_table* table, const ohlc_band_n
     return OHLC_OK;
 }
 
+static ohlc_status save_dictionary(ohlc_db* db, ohlc_table_files* files, const ohlc_table* table) {
+    uint8_t payload[4116];
+    uint64_t count = ohlc_dictionary_count(table);
+    while (files->dictionary_disk_count < count) {
+        uint32_t code = (uint32_t)files->dictionary_disk_count;
+        const ohlc_ticker_entry* entry = table->dictionary->entries[code];
+        ohlc_put_u64(payload, files->dictionary_disk_offset);
+        ohlc_put_u32(payload + 8, code);
+        ohlc_put_u32(payload + 12, entry->length);
+        memcpy(payload + 16, entry->bytes, entry->length);
+        uint64_t offset = 0;
+        ohlc_status status =
+            record_write(db, files->index_fd, &files->index_size, OHLC_RECORD_TICKER, payload,
+                         16u + entry->length, &offset);
+        if (status != OHLC_OK) {
+            return status;
+        }
+        files->index_dirty = true;
+        files->dictionary_disk_count++;
+        files->dictionary_disk_offset = offset;
+    }
+    return OHLC_OK;
+}
+
+static ohlc_status load_dictionary(ohlc_db* db, ohlc_table_files* files, ohlc_table* table,
+                                   uint64_t tail, uint64_t count, uint64_t parent) {
+    if (count > UINT64_C(1) << 32 || count > SIZE_MAX / sizeof(uint64_t)) {
+        return OHLC_CORRUPT;
+    }
+    uint64_t* offsets = ohlc_alloc(&db->allocator, (size_t)count * sizeof(*offsets));
+    if (offsets == NULL) {
+        return OHLC_LIMIT;
+    }
+    uint64_t offset = tail;
+    ohlc_status status = OHLC_OK;
+    for (uint64_t i = count; i != 0; i--) {
+        uint8_t* payload = NULL;
+        size_t size = 0;
+        status =
+            record_read(db, files->index_fd, offset, parent, OHLC_RECORD_TICKER, &payload, &size);
+        if (status != OHLC_OK) {
+            goto cleanup;
+        }
+        if (size < 17 || size > 4112 || ohlc_get_u32(payload + 8) != i - 1 ||
+            ohlc_get_u32(payload + 12) != size - 16) {
+            ohlc_free(&db->allocator, payload);
+            status = OHLC_CORRUPT;
+            goto cleanup;
+        }
+        offsets[i - 1] = offset;
+        parent = offset;
+        offset = ohlc_get_u64(payload);
+        ohlc_free(&db->allocator, payload);
+    }
+    if (offset != 0) {
+        status = OHLC_CORRUPT;
+        goto cleanup;
+    }
+    for (uint64_t i = 0; i < count; i++) {
+        uint8_t* payload = NULL;
+        size_t size = 0;
+        status = record_read(db, files->index_fd, offsets[i], files->index_size, OHLC_RECORD_TICKER,
+                             &payload, &size);
+        if (status != OHLC_OK) {
+            goto cleanup;
+        }
+        ohlc_bytes ticker = {payload + 16, size - 16};
+        uint32_t code = 0;
+        status = ohlc_dictionary_add(db, table, ticker, &code);
+        if (status == OHLC_OK && (code != i || ohlc_dictionary_count(table) != i + 1)) {
+            status = OHLC_CORRUPT;
+        }
+        ohlc_free(&db->allocator, payload);
+        if (status != OHLC_OK) {
+            goto cleanup;
+        }
+    }
+    files->dictionary_disk_count = count;
+    files->dictionary_disk_offset = tail;
+cleanup:
+    ohlc_free(&db->allocator, offsets);
+    return status;
+}
+
 static ohlc_status save_table(ohlc_db* db, ohlc_table* table) {
-    if (table->disk_offset != 0 || table->time_count == 0) {
+    if (table->disk_offset != 0 || (table->time_count == 0 && ohlc_dictionary_count(table) == 0)) {
         return OHLC_OK;
     }
     ohlc_table_files* files = NULL;
@@ -546,14 +630,17 @@ static ohlc_status save_table(ohlc_db* db, ohlc_table* table) {
     if (status != OHLC_OK) {
         return status;
     }
-    status = save_time(db, files, table->times);
+    status = save_dictionary(db, files, table);
+    if (status == OHLC_OK) {
+        status = save_time(db, files, table->times);
+    }
     if (status == OHLC_OK) {
         status = save_radix(db, files, table->bands);
     }
     if (status != OHLC_OK) {
         return status;
     }
-    size_t size = 32u + table->time_page_count * 8u;
+    size_t size = 48u + table->time_page_count * 8u;
     uint8_t* payload = ohlc_alloc(&db->allocator, size);
     if (payload == NULL) {
         return OHLC_LIMIT;
@@ -562,6 +649,8 @@ static ohlc_status save_table(ohlc_db* db, ohlc_table* table) {
     ohlc_put_u64(payload + 8, table->times == NULL ? 0 : table->times->disk_offset);
     ohlc_put_u64(payload + 16, table->bands == NULL ? 0 : table->bands->disk_offset);
     ohlc_put_u64(payload + 24, table->time_page_count);
+    ohlc_put_u64(payload + 32, ohlc_dictionary_count(table));
+    ohlc_put_u64(payload + 40, files->dictionary_disk_offset);
     for (size_t i = 0; i < table->time_page_count; i++) {
         ohlc_time_page* page = table->time_pages[i];
         if (page->disk_offset == 0) {
@@ -575,7 +664,7 @@ static ohlc_status save_table(ohlc_db* db, ohlc_table* table) {
                 goto cleanup;
             }
         }
-        ohlc_put_u64(payload + 32u + i * 8u, page->disk_offset);
+        ohlc_put_u64(payload + 48u + i * 8u, page->disk_offset);
     }
     status = record_save(db, files, OHLC_RECORD_TABLE, payload, size, &table->disk_offset);
 cleanup:
@@ -599,10 +688,15 @@ static ohlc_status load_table(ohlc_db* db, ohlc_table* table, uint64_t offset) {
     if (status != OHLC_OK) {
         return status;
     }
-    if (size < 32 || ohlc_get_u64(payload) == 0 || ohlc_get_u64(payload) > UINT64_C(1) << 32 ||
+    if (size < 48 || ohlc_get_u64(payload) > UINT64_C(1) << 32 ||
         ohlc_get_u64(payload + 24) != (ohlc_get_u64(payload) + 1023u) / 1024u ||
-        size != 32u + ohlc_get_u64(payload + 24) * 8u) {
+        size != 48u + ohlc_get_u64(payload + 24) * 8u) {
         status = OHLC_CORRUPT;
+        goto cleanup;
+    }
+    status = load_dictionary(db, files, table, ohlc_get_u64(payload + 40),
+                             ohlc_get_u64(payload + 32), offset);
+    if (status != OHLC_OK) {
         goto cleanup;
     }
     table->disk_offset = offset;
@@ -616,7 +710,7 @@ static ohlc_status load_table(ohlc_db* db, ohlc_table* table, uint64_t offset) {
         goto cleanup;
     }
     for (size_t i = 0; i < table->time_page_count; i++) {
-        uint64_t page_offset = ohlc_get_u64(payload + 32u + i * 8u);
+        uint64_t page_offset = ohlc_get_u64(payload + 48u + i * 8u);
         uint8_t* encoded = NULL;
         size_t encoded_size = 0;
         status = record_read(db, files->index_fd, page_offset, offset, OHLC_RECORD_REVERSE,
@@ -676,34 +770,8 @@ cleanup:
     return status;
 }
 
-static ohlc_status save_dictionary(ohlc_db* db, uint64_t count) {
-    uint8_t payload[4116];
-    while (db->dictionary_disk_count < count) {
-        uint32_t code = (uint32_t)db->dictionary_disk_count;
-        pthread_mutex_lock(&db->dictionary_mutex);
-        const ohlc_ticker_entry* entry = db->ticker_pages[code / 1024u][code % 1024u];
-        pthread_mutex_unlock(&db->dictionary_mutex);
-        ohlc_put_u64(payload, db->dictionary_disk_offset);
-        ohlc_put_u32(payload + 8, code);
-        ohlc_put_u32(payload + 12, entry->length);
-        memcpy(payload + 16, entry->bytes, entry->length);
-        uint64_t offset = 0;
-        ohlc_status status = record_write(db, db->catalog_fd, &db->catalog_size, OHLC_RECORD_TICKER,
-                                          payload, 16u + entry->length, &offset);
-        if (status != OHLC_OK) {
-            return status;
-        }
-        db->dictionary_disk_count++;
-        db->dictionary_disk_offset = offset;
-    }
-    return OHLC_OK;
-}
-
 static ohlc_status save_catalog(ohlc_db* db, const ohlc_root* root, uint64_t* offset) {
-    ohlc_status status = save_dictionary(db, root->ticker_count);
-    if (status != OHLC_OK) {
-        return status;
-    }
+    ohlc_status status = OHLC_OK;
     size_t size = 32;
     for (uint64_t id = 1; id <= root->last_table_id; id++) {
         const ohlc_table* table = ohlc_root_table(root, (uint32_t)id);
@@ -722,7 +790,7 @@ static ohlc_status save_catalog(ohlc_db* db, const ohlc_root* root, uint64_t* of
     }
     ohlc_put_u64(payload, root->seq);
     ohlc_put_u64(payload + 8, root->ticker_count);
-    ohlc_put_u64(payload + 16, db->dictionary_disk_offset);
+    ohlc_put_u64(payload + 16, 0);
     ohlc_put_u32(payload + 24, root->table_count);
     /* Zero retains the original dense catalog encoding. A nonzero high-water
      * ID marks a sparse catalog that older readers must reject. */
@@ -748,84 +816,15 @@ static ohlc_status save_catalog(ohlc_db* db, const ohlc_root* root, uint64_t* of
     return status;
 }
 
-static ohlc_status load_dictionary(ohlc_db* db, uint64_t tail, uint64_t count, uint64_t parent) {
-    if (count > UINT64_C(1) << 32 || count > SIZE_MAX / sizeof(uint64_t)) {
-        return OHLC_CORRUPT;
-    }
-    uint64_t* offsets = ohlc_alloc(&db->allocator, (size_t)count * sizeof(*offsets));
-    if (offsets == NULL) {
-        return OHLC_LIMIT;
-    }
-    uint64_t offset = tail;
-    ohlc_status status = OHLC_OK;
-    for (uint64_t i = count; i != 0; i--) {
-        uint8_t* payload = NULL;
-        size_t size = 0;
-        status =
-            record_read(db, db->catalog_fd, offset, parent, OHLC_RECORD_TICKER, &payload, &size);
-        if (status != OHLC_OK) {
-            goto cleanup;
-        }
-        if (size < 17 || size > 4112 || ohlc_get_u32(payload + 8) != i - 1 ||
-            ohlc_get_u32(payload + 12) != size - 16) {
-            ohlc_free(&db->allocator, payload);
-            status = OHLC_CORRUPT;
-            goto cleanup;
-        }
-        offsets[i - 1] = offset;
-        parent = offset;
-        offset = ohlc_get_u64(payload);
-        ohlc_free(&db->allocator, payload);
-    }
-    if (offset != 0) {
-        status = OHLC_CORRUPT;
-        goto cleanup;
-    }
-    for (uint64_t i = 0; i < count; i++) {
-        uint8_t* payload = NULL;
-        size_t size = 0;
-        status = record_read(db, db->catalog_fd, offsets[i], db->catalog_size, OHLC_RECORD_TICKER,
-                             &payload, &size);
-        if (status != OHLC_OK) {
-            goto cleanup;
-        }
-        ohlc_bytes ticker = {payload + 16, size - 16};
-        ohlc_ticker_entry* entry = NULL;
-        status = ohlc_dictionary_prepare(db, ticker, (uint32_t)i, &entry);
-        if (status == OHLC_OK) {
-            ohlc_dictionary_publish(db, entry);
-        }
-        ohlc_free(&db->allocator, payload);
-        if (status != OHLC_OK) {
-            goto cleanup;
-        }
-    }
-    db->dictionary_disk_count = count;
-    db->dictionary_disk_offset = tail;
-cleanup:
-    ohlc_free(&db->allocator, offsets);
-    return status;
-}
-
-static void reset_recovered_dictionary(ohlc_db* db) {
-    for (size_t i = 0; i < db->ticker_bucket_count; i++) {
-        ohlc_ticker_entry* entry = db->ticker_buckets[i];
-        while (entry != NULL) {
-            ohlc_ticker_entry* next = entry->next;
-            ohlc_free(&db->allocator, entry);
-            entry = next;
-        }
-        db->ticker_buckets[i] = NULL;
-    }
-    for (size_t i = 0; i < db->ticker_page_count; i++) {
-        memset(db->ticker_pages[i], 0, 1024u * sizeof(ohlc_ticker_entry*));
-    }
-    db->dictionary_count = 0;
-    db->dictionary_disk_count = 0;
-    db->dictionary_disk_offset = 0;
-}
-
 static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkpoint) {
+    /* A failed newer catalog may have loaded partial dictionary tails. Each
+     * fallback starts from its own table roots, including empty tables. */
+    for (size_t i = 0; i < db->file_capacity; i++) {
+        if (db->files[i] != NULL) {
+            db->files[i]->dictionary_disk_count = 0;
+            db->files[i]->dictionary_disk_offset = 0;
+        }
+    }
     uint8_t* payload = NULL;
     size_t size = 0;
     ohlc_status status = record_read(db, db->catalog_fd, checkpoint->catalog, db->catalog_size,
@@ -845,7 +844,7 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
         goto cleanup;
     }
     root->seq = checkpoint->seq;
-    root->ticker_count = ohlc_get_u64(payload + 8);
+    uint64_t ticker_count = ohlc_get_u64(payload + 8);
     uint32_t table_count = ohlc_get_u32(payload + 24);
     uint32_t last_table_id = ohlc_get_u32(payload + 28);
     if (last_table_id == 0) {
@@ -896,6 +895,7 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
         status = ohlc_root_edit_table(db, root, info.id, &table);
         if (status == OHLC_OK) {
             status = load_table(db, table, table_offset);
+            root->ticker_count += ohlc_dictionary_count(table);
         }
         if (status != OHLC_OK) {
             goto cleanup;
@@ -906,10 +906,8 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
         goto cleanup;
     }
     root->last_table_id = last_table_id;
-    status =
-        load_dictionary(db, ohlc_get_u64(payload + 16), root->ticker_count, checkpoint->catalog);
-    if (status != OHLC_OK) {
-        reset_recovered_dictionary(db);
+    if (root->ticker_count != ticker_count || ohlc_get_u64(payload + 16) != 0) {
+        status = OHLC_CORRUPT;
         goto cleanup;
     }
     ohlc_root_publish(db, root);
@@ -939,7 +937,7 @@ static ohlc_status checkpoint_read(ohlc_db* db, unsigned int slot, ohlc_checkpoi
     }
     uint32_t crc = ohlc_get_u32(bytes + 4092);
     ohlc_put_u32(bytes + 4092, 0);
-    if (memcmp(bytes, "OHLCUR4\0", 8) != 0 || ohlc_get_u32(bytes + 8) != OHLC_FORMAT_VERSION ||
+    if (memcmp(bytes, "OHLCUR5\0", 8) != 0 || ohlc_get_u32(bytes + 8) != OHLC_FORMAT_VERSION ||
         memcmp(bytes + 16, db->uuid, 16) != 0 || crc != ohlc_crc32c(0, bytes, sizeof(bytes)) ||
         ohlc_get_u32(bytes + 12) != 0 || ohlc_get_u32(bytes + 60) != 0) {
         return OHLC_OK;
@@ -965,7 +963,7 @@ static ohlc_status checkpoint_write(ohlc_db* db, uint64_t seq, uint64_t catalog,
     uint8_t bytes[OHLC_BLOCK_BYTES] = {0};
     uint64_t generation = db->checkpoint_generation + 1;
     unsigned int slot = (unsigned int)((generation - 1) & 1u);
-    memcpy(bytes, "OHLCUR4\0", 8);
+    memcpy(bytes, "OHLCUR5\0", 8);
     ohlc_put_u32(bytes + 8, OHLC_FORMAT_VERSION);
     memcpy(bytes + 16, db->uuid, 16);
     ohlc_put_u64(bytes + 32, generation);
@@ -1177,7 +1175,8 @@ ohlc_status ohlc_checkpoint_run(ohlc_db* db) {
     uint8_t* buffer = NULL;
     for (uint64_t id = 1; id <= root->last_table_id; id++) {
         const ohlc_table* source = ohlc_root_table(source_root, (uint32_t)id);
-        if (source == NULL || source->disk_offset != 0 || source->time_count == 0) {
+        if (source == NULL || source->disk_offset != 0 ||
+            (source->time_count == 0 && ohlc_dictionary_count(source) == 0)) {
             continue;
         }
         ohlc_table* table = NULL;
@@ -1328,7 +1327,7 @@ ohlc_status ohlc_wal_encode(ohlc_db* db, uint16_t type, uint32_t table, uint32_t
     if (frame == NULL) {
         return OHLC_LIMIT;
     }
-    memcpy(frame, "OHLCWTX4", 8);
+    memcpy(frame, "OHLCWTX5", 8);
     ohlc_put_u16(frame + 8, OHLC_FORMAT_VERSION);
     ohlc_put_u16(frame + 10, type);
     ohlc_put_u64(frame + 16, total);
@@ -1339,7 +1338,7 @@ ohlc_status ohlc_wal_encode(ohlc_db* db, uint16_t type, uint32_t table, uint32_t
     ohlc_put_u32(frame + 48, ohlc_crc32c(0, frame, 64));
     memcpy(frame + 64, payload, size);
     uint8_t* footer = frame + total - 32;
-    memcpy(footer, "OHLCEND4", 8);
+    memcpy(footer, "OHLCEND5", 8);
     ohlc_put_u64(footer + 8, total);
     ohlc_put_u64(footer + 16, seq);
     ohlc_put_u32(footer + 24, ohlc_crc32c(0, frame, total));
@@ -1419,6 +1418,11 @@ static ohlc_status replay_frame(ohlc_db* db, const uint8_t* frame) {
         if (status == OHLC_NOT_FOUND) {
             status = OHLC_CORRUPT;
         }
+    } else if (type == 5) {
+        status = ohlc_prepare_named(db, db->root, table, payload, size, count, &candidate);
+        if (status == OHLC_NOT_FOUND || status == OHLC_INVALID) {
+            status = OHLC_CORRUPT;
+        }
     } else if (type == 2) {
         if (count == 0 || count > OHLC_MAX_BATCH_ROWS || size != (size_t)count * 40u) {
             return OHLC_CORRUPT;
@@ -1437,14 +1441,24 @@ static ohlc_status replay_frame(ohlc_db* db, const uint8_t* frame) {
         }
         candidate->seq = seq;
         if (type == 1) {
-            if (table != 0 || size < 9 || size > 4104 || ohlc_get_u32(payload + 4) != size - 8) {
+            if (size < 9 || size > 4104 || ohlc_get_u32(payload + 4) != size - 8) {
                 status = OHLC_CORRUPT;
             } else {
-                ohlc_bytes ticker = {payload + 8, size - 8};
-                ohlc_ticker_entry* entry = NULL;
-                status = ohlc_dictionary_prepare(db, ticker, ohlc_get_u32(payload), &entry);
+                ohlc_table* target = NULL;
+                status = ohlc_root_edit_table(db, candidate, table, &target);
+                uint32_t code = 0;
+                if (status == OHLC_OK && ohlc_dictionary_count(target) != ohlc_get_u32(payload)) {
+                    status = OHLC_CORRUPT;
+                }
                 if (status == OHLC_OK) {
-                    ohlc_dictionary_publish(db, entry);
+                    status =
+                        ohlc_dictionary_add(db, target, (ohlc_bytes){payload + 8, size - 8}, &code);
+                }
+                if (status == OHLC_OK && (code != ohlc_get_u32(payload) ||
+                                          ohlc_dictionary_count(target) != (uint64_t)code + 1)) {
+                    status = OHLC_CORRUPT;
+                }
+                if (status == OHLC_OK) {
                     candidate->ticker_count++;
                 }
             }
@@ -1596,7 +1610,7 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
             ohlc_put_u32(header + 48, 0);
             uint64_t total = ohlc_get_u64(header + 16);
             uint64_t payload_size = ohlc_get_u64(header + 40);
-            if (memcmp(header, "OHLCWTX4", 8) != 0 ||
+            if (memcmp(header, "OHLCWTX5", 8) != 0 ||
                 ohlc_get_u16(header + 8) != OHLC_FORMAT_VERSION || ohlc_get_u32(header + 12) != 0 ||
                 total < 96 || total > OHLC_FRAME_LIMIT || total % 8u != 0 ||
                 payload_size > total - 96 || total != 96u + ((payload_size + 7u) & ~UINT64_C(7)) ||
@@ -1619,7 +1633,7 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
                 uint8_t* footer = frame + total - 32;
                 uint32_t crc = ohlc_get_u32(footer + 24);
                 ohlc_put_u32(footer + 24, 0);
-                if (memcmp(footer, "OHLCEND4", 8) != 0 || ohlc_get_u64(footer + 8) != total ||
+                if (memcmp(footer, "OHLCEND5", 8) != 0 || ohlc_get_u64(footer + 8) != total ||
                     ohlc_get_u64(footer + 16) != expected_seq ||
                     ohlc_get_u64(header + 24) != expected_seq || expected_seq == 0 ||
                     ohlc_get_u32(footer + 28) != 0 || crc != ohlc_crc32c(0, frame, (size_t)total)) {
