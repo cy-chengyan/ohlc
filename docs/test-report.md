@@ -700,4 +700,40 @@ python3 tools/summarize_retirement.py "$OHLC_LIFECYCLE_ROOT" --output summary.js
 [格式检查](../build/acceptance/table-dictionary-20260928/format.log)、
 [环境与结果](../build/acceptance/table-dictionary-20260928/validation.json)。
 
-本次没有执行 Linux 验证、断电持久性测试或性能复测。现有测试数据库没有迁移、删除或重新导入。
+上述 macOS 验收阶段没有执行 Linux 验证、断电持久性测试或性能复测。
+现有测试数据库没有迁移、删除或重新导入。后续 Linux 打包与安装验收见下节。
+
+## 表级证券字典 RPM 安装验收（2026-09-28）
+
+在专用 RHEL 9.4 x86-64 测试机的 `/home/ohlc/rpm-env`，复用已有的隔离构建环境，
+完成 EL8、EL9 两套 `0.1.0~beta.1-4` RPM。源码为提交
+`10660ad3bc7a37d5899ccef24594f2910bcff684` 加 `packaging/ohlc.spec` 的 Release 4 和变更记录。
+源码归档 SHA-256 为 `7248dcdcea38770edcfe383ec5ff65c5f471f525ab1d9e857f534dbb4e2a4099`。
+
+| 验证范围 | 结果 |
+|---|---|
+| EL8 隔离构建 | 10/10 项检查通过，9.12 秒；生成 8 个功能包、7 个调试包及 SRPM |
+| EL9 隔离构建 | 10/10 项检查通过，9.06 秒；生成 8 个功能包、7 个调试包及 SRPM |
+| 包完整性 | 构建产物的 RPM 摘要及 SHA-256 清单通过；安装前再次核对清单 |
+| EL9 安装 | 8 个功能包安装完成；已安装运行库、客户端及语言绑定的 `rpm -V` 通过 |
+| 服务 | systemd 为 active/running，已启用开机启动；监听 `192.168.7.188:8765` |
+| 实际安装路径 | C ABI 2、Python 网络/嵌入式绑定、Java 17 JAR/JNI 验证通过 |
+| 表级字典 | 两表自动创建证券且分别从 0 编号；同名证券可有不同编号；查询值一致 |
+| 失败与重启 | 重复键批次拒绝后无新名称、无序号推进、无编号消耗；重启后名称和全部字段保持一致 |
+| 局域网 | 从本地开发机连接测试服务，PING 和 STATS 成功 |
+
+安装前 OHLC 软件包已卸载，`/ssd01/ohlc` 为空。恢复原有 `.rpmsave` 服务配置，
+保留 systemd 自定义数据目录设置；没有迁移、删除或导入旧测试数据，没有修改防火墙。
+本次临时服务测试表已删除，最终表数和证券数均为 0。
+主机默认 `java` 未切换；安装后 Java 验证显式使用 `/usr/lib/jvm/java-17-openjdk/bin/java`。
+
+两套产物分别位于测试机 `/home/ohlc/rpm-env/artifacts/el8/` 和 `el9/` 下的
+`20260928T001342Z-snapshot-7248dcdcea38/`；两处 `latest` 均指向此次构建。
+安装记录位于 `/home/ohlc/rpm-env/deployments/20260928T001342Z-table-dictionary/`。
+本地证据：[构建日志](../build/acceptance/rpm-table-dictionary-20260928/build-el8-el9.log)、
+[安装日志](../build/acceptance/rpm-table-dictionary-20260928/install.log)、
+[安装验证](../build/acceptance/rpm-table-dictionary-20260928/installed-smoke.log)、
+[结果元数据](../build/acceptance/rpm-table-dictionary-20260928/validation.json)。
+
+EL8 使用 UBI 用户空间并共享 RHEL 9 内核，不代表独立 EL8 内核验收。
+本次没有验证 ARM64、真实断电或设备故障，也没有重新测量性能。RPM 为未签名的本地 beta 包。
