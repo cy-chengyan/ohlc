@@ -6,7 +6,7 @@
 
 Name:           ohlc
 Version:        0.1.0~beta.1
-Release:        7%{?dist}
+Release:        8%{?dist}
 Summary:        Fixed-row OHLC storage engine and service
 License:        Apache-2.0
 URL:            https://github.com/cy-chengyan/ohlc
@@ -193,6 +193,10 @@ getent passwd ohlc >/dev/null || \
 %{_libdir}/libohlc_jni.so
 
 %changelog
+* Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-8
+- Unify public series queries to inclusive start and end bounds.
+- Update the network protocol to 5 and C ABI to 3; retain disk format 5.
+
 * Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-7
 - Complete insert help examples for second, minute, day, month and year bars.
 

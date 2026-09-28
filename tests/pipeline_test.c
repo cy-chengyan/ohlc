@@ -69,7 +69,7 @@ static void check_query(ohlc_db* db, uint32_t table, bool cross, uint32_t first,
     if (cross) {
         OK(ohlc_cross(db, table, first, &cursor));
     } else {
-        OK(ohlc_series(db, table, 0, first, (uint64_t)first + count, &cursor));
+        OK(ohlc_series(db, table, 0, first, (uint64_t)first + count - 1, &cursor));
     }
     size_t seen = 0;
     for (;;) {
@@ -114,7 +114,7 @@ static void* checkpoint(void* argument) {
 
 static void check_one(ohlc_db* db, uint32_t table, uint32_t key, uint32_t value) {
     ohlc_cursor* cursor = NULL;
-    OK(ohlc_series(db, table, 0, key, (uint64_t)key + 1, &cursor));
+    OK(ohlc_series(db, table, 0, key, key, &cursor));
     uint8_t row[OHLC_RESULT_BYTES];
     size_t count = 0;
     OK(ohlc_cursor_next(cursor, row, 1, &count));

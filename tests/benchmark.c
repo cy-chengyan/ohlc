@@ -70,7 +70,7 @@ static void measure(ohlc_db* db, uint32_t table, uint32_t stocks, uint32_t times
         uint64_t start = nanoseconds();
         ohlc_cursor* cursor = NULL;
         require(cross ? ohlc_cross(db, table, time, &cursor)
-                      : ohlc_series(db, table, stock, 0, times, &cursor));
+                      : ohlc_series(db, table, stock, 0, times - 1, &cursor));
         uint64_t sum = 0;
         size_t rows = 0;
         while (true) {

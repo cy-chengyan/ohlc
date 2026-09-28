@@ -76,8 +76,11 @@ ohlc_status ohlc_client_checkpoint(ohlc_client* client);
  * rows is a borrowed view of count packed 36-byte rows. A successful call with
  * final=true completes the query, including any rows returned by that call.
  * Closing a connection cancels a query; partial results are never complete. */
+/* Query the closed range [start, end], with both bounds in uint32. Equal bounds
+ * query one time; reversed or out-of-range bounds return INVALID. The uint64
+ * end parameter prevents truncation before validation. */
 ohlc_status ohlc_client_series(ohlc_client* client, uint32_t table_id, uint32_t ticker,
-                               uint32_t start, uint64_t end_exclusive);
+                               uint32_t start, uint64_t end);
 ohlc_status ohlc_client_cross(ohlc_client* client, uint32_t table_id, uint32_t time_key);
 /* Same selection semantics as ohlc_cross_tickers; borrows names during this call.
  * Also bounded by the negotiated frame limit. Uses the normal query/next flow. */

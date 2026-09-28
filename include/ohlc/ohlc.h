@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 #define OHLC_VERSION "0.1.0-beta.1"
-#define OHLC_ABI_VERSION 2u
+#define OHLC_ABI_VERSION 3u
 #define OHLC_FORMAT_VERSION 5u
 #define OHLC_ROW_BYTES 32u
 #define OHLC_WRITE_BYTES 40u
@@ -173,10 +173,12 @@ ohlc_status ohlc_write_named(ohlc_db* db, uint32_t table_id, const ohlc_bytes* t
 ohlc_status ohlc_write(ohlc_db* db, uint32_t table_id, const void* rows, size_t count,
                        uint64_t* commit_seq);
 
-/* The range is half open; end_exclusive can be 2^32. Each cursor pins one
- * database snapshot, and must be closed even after a read error. */
+/* Query the closed range [start, end]. Both bounds must fit uint32; the wider
+ * end parameter allows out-of-range values to be rejected without truncation.
+ * Equal bounds query one time; reversed bounds return INVALID. Each cursor
+ * pins one database snapshot and must be closed even after a read error. */
 ohlc_status ohlc_series(ohlc_db* db, uint32_t table_id, uint32_t ticker_code, uint32_t start,
-                        uint64_t end_exclusive, ohlc_cursor** output);
+                        uint64_t end, ohlc_cursor** output);
 ohlc_status ohlc_cross(ohlc_db* db, uint32_t table_id, uint32_t time_key, ohlc_cursor** output);
 /* Select exact ticker bytes in the same snapshot as the rows. Unknown names and
  * missing rows are omitted; duplicates appear once, ordered by table-local code.

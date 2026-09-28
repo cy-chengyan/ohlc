@@ -424,8 +424,8 @@ JNIEXPORT jlong JNICALL Java_io_ohlc_Database_00024Native_series(JNIEnv* env, jc
                                                                  jlong table, jlong ticker,
                                                                  jlong start, jlong end) {
     (void)type;
-    if (!uint32_valid(table) || !uint32_valid(ticker) || !uint32_valid(start) || end < 0 ||
-        (uint64_t)end > UINT64_C(4294967296)) {
+    if (!uint32_valid(table) || !uint32_valid(ticker) || !uint32_valid(start) ||
+        !uint32_valid(end)) {
         check(env, OHLC_INVALID);
         return 0;
     }

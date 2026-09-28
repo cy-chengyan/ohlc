@@ -942,12 +942,12 @@ static ohlc_status cursor_new(ohlc_db* db, uint32_t table_id, ohlc_cursor** outp
 }
 
 ohlc_status ohlc_series(ohlc_db* db, uint32_t table_id, uint32_t ticker_code, uint32_t start,
-                        uint64_t end_exclusive, ohlc_cursor** output) {
+                        uint64_t end, ohlc_cursor** output) {
     if (output == NULL) {
         return OHLC_INVALID;
     }
     *output = NULL;
-    if (end_exclusive > UINT64_C(1) << 32 || start > end_exclusive) {
+    if (end > UINT32_MAX || start > end) {
         return OHLC_INVALID;
     }
     ohlc_cursor* cursor = NULL;
@@ -961,8 +961,8 @@ ohlc_status ohlc_series(ohlc_db* db, uint32_t table_id, uint32_t ticker_code, ui
     }
     cursor->kind = 1;
     cursor->ticker = ticker_code;
-    cursor->end = end_exclusive;
-    cursor->done = start == end_exclusive;
+    /* Keep the internal scan half open, including the largest uint32 key. */
+    cursor->end = end + 1;
     ohlc_time_seek(cursor->table->times, start, &cursor->times);
     *output = cursor;
     return OHLC_OK;

@@ -96,9 +96,41 @@ public final class JavaEmbeddedTest {
                 assert table.timeKey("20260918") == key + 1;
             }
             table.insert("AAPL", stamp, 1, 2, 0, 1, 3, 4, 1000000);
+            table.insert("AAPL", "@" + (key + 1), 1, 2, 0, 1, 3, 4, 1000000);
+            table.insert("AAPL", "@" + (key + 2), 1, 2, 0, 1, 3, 4, 1000000);
+            table.insert("AAPL", "@4294967295", 1, 2, 0, 1, 3, 4, 1000000);
             try (Database.Query query = table.series("AAPL", stamp, "@" + (key + 1))) {
-                assert query.next().count() == 1;
-                assert query.next() == null;
+                int rows = 0;
+                Database.Chunk chunk;
+                while ((chunk = query.next()) != null) {
+                    rows += chunk.count();
+                }
+                assert rows == 2;
+            }
+            long[][] ranges = {{key, key, 1}, {key + 3, key + 3, 0},
+                               {0xffffffffL, 0xffffffffL, 1}};
+            for (long[] range : ranges) {
+                try (Database.Query query = table.series(table.resolve("AAPL"), range[0], range[1])) {
+                    int rows = 0;
+                    Database.Chunk chunk;
+                    while ((chunk = query.next()) != null) {
+                        rows += chunk.count();
+                    }
+                    assert rows == range[2];
+                }
+            }
+            long[][] invalid = {{key + 1, key}, {key, 0x100000000L}, {key, -1}};
+            for (long[] range : invalid) {
+                try (Database.Query query = table.series(table.resolve("AAPL"), range[0], range[1])) {
+                    throw new AssertionError("Invalid closed range accepted: " + query);
+                } catch (IllegalArgumentException expected) {
+                    // Rejection must occur before a query takes ownership of the connection.
+                }
+            }
+            try (Database.Query query = table.series("AAPL", stamp, "@4294967296")) {
+                throw new AssertionError("Out-of-range endpoint accepted: " + query);
+            } catch (IllegalArgumentException | Ohlc.Failure expected) {
+                // The former exclusive sentinel is not a valid inclusive time key.
             }
             db.drop("java_period");
         }
@@ -135,7 +167,7 @@ public final class JavaEmbeddedTest {
             assert minute.timeKey(minute.formatTime(0xffffffffL)) == 0xffffffffL;
             long count = 0;
             ByteBuffer output = Database.buffer(19 * Ohlc.RESULT_BYTES + 7);
-            try (Database.Query query = minute.series(db.resolve(1, "AAPL"), key, key + 1800)) {
+            try (Database.Query query = minute.series(db.resolve(1, "AAPL"), key, key + 1797)) {
                 while (true) {
                     output.clear().position(3).limit(output.capacity() - 4);
                     int rows = query.read(output);

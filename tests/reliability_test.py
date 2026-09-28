@@ -114,7 +114,7 @@ def verify_oracle(client, definitions, symbols):
         keys = sorted({key for _, key in oracle})
         for code, ticker in symbols.items():
             expected = [(key, *oracle[code, key]) for key in keys if (code, key) in oracle]
-            assert read_rows(table.series(ticker, keys[0], keys[-1] + 1)) == expected
+            assert read_rows(table.series(ticker, keys[0], keys[-1])) == expected
             checked += len(expected)
             queries += 1
         absent = [key for key in (keys[0] - 1, keys[-1] + 1) if 0 <= key < 1 << 32]
@@ -225,7 +225,7 @@ def resources(binaries, root):
         time.sleep(0.2)
         with server.connect() as slow, server.connect() as fast:
             fast_table = fast.table("slow")
-            query = slow.table("slow").series("SLOW", 0, count)
+            query = slow.table("slow").series("SLOW", 0, count - 1)
             started = time.monotonic()
             latencies = []
             while time.monotonic() - started < 2:

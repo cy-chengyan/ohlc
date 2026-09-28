@@ -472,10 +472,9 @@ static void append_binary(connection* client, const uint8_t* bytes, size_t count
 
 static void query_ohlc(connection* client, bool cross, uint32_t stock, uint32_t first,
                        uint32_t length) {
-    ohlc_status status =
-        cross ? ohlc_client_cross(client->ohlc, client->table.id, time_key(first))
-              : ohlc_client_series(client->ohlc, client->table.id, stock, time_key(first),
-                                   (uint64_t)time_key(first + length - 1u) + 1u);
+    ohlc_status status = cross ? ohlc_client_cross(client->ohlc, client->table.id, time_key(first))
+                               : ohlc_client_series(client->ohlc, client->table.id, stock,
+                                                    time_key(first), time_key(first + length - 1u));
     require_ohlc(status, "OHLC query");
     bool final = false;
     while (!final) {

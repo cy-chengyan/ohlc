@@ -20,7 +20,7 @@ from network_test import connect_when_ready, require_error
 
 
 def frame(operation, request, body=b"", flags=3, status=0, chunk=0):
-    return struct.pack("<4sHHIIQII", b"OHLC", 4, operation, flags, len(body), request,
+    return struct.pack("<4sHHIIQII", b"OHLC", 5, operation, flags, len(body), request,
                        status, chunk) + body
 
 

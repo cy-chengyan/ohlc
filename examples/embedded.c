@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
     }
     if (!successful(ohlc_write_named(db, table.id, &ticker, 1, batch, 3, &sequence)) ||
         !successful(ohlc_resolve(db, table.id, ticker, &code)) ||
-        !successful(ohlc_series(db, table.id, code, keys[0], (uint64_t)keys[2] + 1, &cursor))) {
+        !successful(ohlc_series(db, table.id, code, keys[0], keys[2], &cursor))) {
         goto cleanup;
     }
     printf("Committed sequence: %" PRIu64 "\n", sequence);

@@ -242,10 +242,9 @@ static uint64_t query(benchmark* state, bool cross, uint32_t stock, uint32_t fir
     }
     state->count = 0;
     uint64_t started = now_ns();
-    ohlc_status status =
-        cross ? ohlc_client_cross(state->client, state->table.id, time_key(first))
-              : ohlc_client_series(state->client, state->table.id, stock, time_key(first),
-                                   (uint64_t)time_key(first + length - 1u) + 1u);
+    ohlc_status status = cross ? ohlc_client_cross(state->client, state->table.id, time_key(first))
+                               : ohlc_client_series(state->client, state->table.id, stock,
+                                                    time_key(first), time_key(first + length - 1u));
     check(status, "Query start");
     bool final = false;
     while (!final) {

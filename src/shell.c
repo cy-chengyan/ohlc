@@ -489,9 +489,7 @@ static ohlc_status query(shell* state, const shell_command* command, bool series
             if (key > last) {
                 return OHLC_INVALID;
             }
-            /* The engine uses an exclusive bound in normalized minutes/days,
-             * (second, minute or day), not the bar period. Widen before adding one. */
-            end = (uint64_t)last + 1;
+            end = last;
         }
         if (status == OHLC_OK) {
             status = resolve(state, table.id, &command->words[2], &ticker);
@@ -905,8 +903,9 @@ static ohlc_status execute(shell* state, const shell_command* command) {
                 fprintf(stderr, "%02x", info.uuid[i]);
             }
             fprintf(stderr,
-                    " protocol=4 access=%s max_frame=%" PRIu32 " max_rows=%" PRIu32
+                    " protocol=%u access=%s max_frame=%" PRIu32 " max_rows=%" PRIu32
                     " query_ms=%" PRIu32 "\n",
+                    OHLC_PROTOCOL_VERSION,
                     (info.capabilities & OHLC_CAP_WRITE) != 0 ? "read/write" : "read",
                     info.max_frame_bytes, info.max_write_rows, info.max_query_ms);
         }

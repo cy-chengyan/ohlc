@@ -18,8 +18,9 @@ and an interactive command shell.
 [RHEL packages](#rhel-packages) · [Benchmarks](#benchmarks) ·
 [Design](docs/design.md) · [Test report](docs/test-report.md)
 
-Current development format: **disk 5 / protocol 4 / C ABI 2**. Earlier test databases are
-rejected as unsupported; use a new database directory. No migration is provided.
+Current development format: **disk 5 / protocol 5 / C ABI 3**. Existing format-5 databases
+remain readable. Earlier disk formats are unsupported; no migration is provided.
+Update the server, libraries, and bindings together: series endpoints are now inclusive.
 
 ## What it provides
 
@@ -59,8 +60,12 @@ in each table and are scoped to the database UUID and table ID. Optional table-l
 is available for low-level writes using persistent codes. IDs remain stable; stopping writes for a delisted ticker preserves its history and does not create
 placeholder rows. A stored zero is a valid value, not a missing-data marker.
 
-Range queries use **`[start, end)`** and return records in actual time order, including after historical
-backfill. Second/minute tables require a time zone; minute timestamps must align to whole minutes.
+C, Python, and Java `series` APIs (network and embedded), and shell
+`series ... from START and END`, all use the closed range **`[start, end]`**, including both
+endpoints. Equal bounds query one time; reversed bounds are rejected. Both keys must fit uint32,
+so the maximum end is `4294967295`. Results are ordered by actual time, including after
+historical backfill. Second/minute tables require a time zone; minute timestamps must align
+to whole minutes.
 An explicit UTC offset overrides the table's zone. Day/month/year tables use full calendar-date
 labels. A period such as `5s`, `3m`, `5d`, `1mo`, or `1y`
 describes caller-supplied bars: ohlc does not round timestamps, fill gaps, or calculate aggregates.
@@ -181,7 +186,7 @@ The existing row layout and minute/day keys are unchanged.
 Shell `series ... from START and END` includes both endpoints; the old `to` syntax is removed.
 `cross ... and ticker in (...)` filters on the server, ignores unknown tickers and missing bars,
 and returns each match once in table-local ticker-code order. Without the clause, all tickers
-are queried. The existing C, Python and Java series APIs keep their half-open ranges.
+are queried. C, Python and Java series APIs use the same inclusive endpoints.
 
 `drop TABLE;` permanently deletes a table and its rows; see `help drop;`. Existing queries
 finish on their original snapshots before files are reclaimed. Recreating the name assigns

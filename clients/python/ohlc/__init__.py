@@ -100,7 +100,7 @@ def _check_abi(lib):
         raise RuntimeError("The native library predates the supported ohlc ABI") from error
     version.argtypes = []
     version.restype = C.c_uint32
-    if version() != 2:
+    if version() != 3:
         raise RuntimeError("Incompatible ohlc native ABI; install matching libraries and bindings")
 
 
@@ -484,7 +484,8 @@ class Table:
         return self.write([(ticker, time, values)])
 
     def series(self, ticker, start, end):
-        end = 1 << 32 if end == "@4294967296" or end == 1 << 32 else self.time_key(end)
+        """Query [start, end], including both times; both keys must fit uint32."""
+        end = self.time_key(end)
         with self.connection._lock:
             self.connection._require_open()
             code = self.resolve(ticker)

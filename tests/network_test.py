@@ -14,6 +14,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "python"))
 from ohlc import Connection, Error
+from series_contract import check_closed_series
 
 
 def require_error(code, operation):
@@ -41,6 +42,7 @@ def connect_when_ready(process, **options):
 
 def check_shell_queries(execute, options):
     """Check inclusive shell bounds and server-side ticker-set parsing."""
+    assert " protocol=5 " in execute("ping; status;").stderr
     values = (1, 2, 0, 1, 3, 4, 1000000)
     with Connection(**options) as client:
         minute = client.create("shell_range", period="3m", timezone="Asia/Shanghai")
@@ -108,6 +110,8 @@ def check_extended_periods(execute, options):
             result = execute(f'cross {name} "{stamp}" and ticker in (AAPL, UNKNOWN) --format jsonl;')
             assert [json.loads(line)["key"] for line in result.stdout.splitlines()] == [0]
             assert f"\t{name}\t{period}\t" in execute(f"describe {name};").stdout
+            check_closed_series(table, key, stamp, (1, 2, 0, 1, 3, 4, 1000000))
+            assert [json.loads(line)["key"] for line in execute(query).stdout.splitlines()] == [key, key + 1]
         execute('insert seconds MAX "2106-02-07T06:28:15Z" 1 2 0 1 3 4 1000000;')
         result = execute('series seconds MAX from @4294967295 and @4294967295 --format jsonl;')
         assert json.loads(result.stdout)["key"] == 0xffffffff
@@ -140,6 +144,9 @@ def check_cross_filter_frames(socket_path, token):
         peer.settimeout(5)
         peer.connect(socket_path)
         requests = [(1, struct.pack("<I", len(token)) + token, 0),
+                    (5, struct.pack("<IIIQ", 1, 0, 0, 1 << 32), 1),
+                    (5, struct.pack("<IIIQ", 1, 0, 1, 0), 1),
+                    (5, struct.pack("<IIIQ", 1, 0, 0, 0), 0),
                     (6, struct.pack("<III", 1, 0, 65537), 3),
                     (6, struct.pack("<IIII", 1, 0, 1, 4097) + b"x", 1),
                     (6, struct.pack("<III", 1, 0, 0) + b"extra", 1),
@@ -148,7 +155,7 @@ def check_cross_filter_frames(socket_path, token):
                     (6, struct.pack("<III", 1, 0, 0), 0),
                     (2, b"", 0)]
         for request_id, (opcode, body, expected) in enumerate(requests, 1):
-            peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 4, opcode, 0, len(body), request_id, 0, 0) + body)
+            peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 5, opcode, 0, len(body), request_id, 0, 0) + body)
             header = struct.unpack("<4sHHIIQII", receive_exact(peer, 32))
             assert header[2] == opcode and header[3] == 3 and header[5] == request_id
             assert header[6] == expected, header
@@ -199,7 +206,7 @@ def main():
                 assert stats["commit_seq"] == stats["checkpoint_seq"]
                 assert stats["table_count"] == 2 and stats["ticker_count"] == 3
                 received = []
-                with minute.series("AAPL", key, key + count * 3) as query:
+                with minute.series("AAPL", key, key + (count - 1) * 3) as query:
                     chunks = list(query)
                 assert chunks[-1].final
                 assert sum(chunk.count for chunk in chunks) == count
@@ -211,7 +218,7 @@ def main():
                 with minute.cross(key) as query:
                     rows = [result for chunk in query for result in chunk.rows()]
                 assert rows == [(code, *row), (binary, *((0,) * 7))]
-                with day.series("AAPL", "20260901", "20260902") as query:
+                with day.series("AAPL", "20260901", "20260901") as query:
                     assert sum(chunk.count for chunk in query) == 1
                 require_error(1, lambda: minute.write_encoded(encoded[:40] * 2))
                 with minute.cross(key - 1) as query:
@@ -288,7 +295,13 @@ def main():
             with socket.socket(socket.AF_UNIX) as peer:
                 peer.settimeout(5)
                 peer.connect(socket_path)
-                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 4, 1, 0, 0xffffffff, 1, 0, 0))
+                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 5, 1, 0, 0xffffffff, 1, 0, 0))
+                assert peer.recv(1) == b""
+            # Protocol 4 used an exclusive end and must not be silently accepted.
+            with socket.socket(socket.AF_UNIX) as peer:
+                peer.settimeout(5)
+                peer.connect(socket_path)
+                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 4, 1, 0, 0, 1, 0, 0))
                 assert peer.recv(1) == b""
         finally:
             process.send_signal(signal.SIGTERM)
@@ -299,7 +312,7 @@ def main():
         try:
             with connect_when_ready(process, **options) as client:
                 assert client.uuid == uuid
-                with client.table("bars_3m").series("AAPL", key, key + count * 3) as query:
+                with client.table("bars_3m").series("AAPL", key, key + (count - 1) * 3) as query:
                     assert sum(chunk.count for chunk in query) == count
         finally:
             process.send_signal(signal.SIGTERM)

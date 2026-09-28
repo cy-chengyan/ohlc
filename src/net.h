@@ -7,7 +7,7 @@
 
 #include <openssl/ssl.h>
 
-#define OHLC_PROTOCOL_VERSION 4u
+#define OHLC_PROTOCOL_VERSION 5u
 #define OHLC_NET_HEADER 32u
 #define OHLC_NET_CHUNK_ROWS 16384u
 #define OHLC_CAP_READ 1u

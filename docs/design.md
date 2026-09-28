@@ -2,7 +2,7 @@
 
 版本：1.0（基准第一版）\
 日期：2026-09-28\
-软件基准：0.1.0-beta.1；磁盘格式 5 / 网络协议 4 / C ABI 2\
+软件基准：0.1.0-beta.1；磁盘格式 5 / 网络协议 5 / C ABI 3\
 项目仓库：[cy-chengyan/ohlc](https://github.com/cy-chengyan/ohlc)\
 许可证：Apache-2.0
 
@@ -140,8 +140,12 @@ ticker 字符串 ──该表的证券字典──> ticker_code
 - `time_key` 是 uint32 的规范化真实时间键。秒类使用 POSIX Unix 秒数，分钟类使用 Unix 分钟数；日、月、年类统一使用公历日期相对 1970-01-01 的天数。
 - `time_code` 是引擎为某表中的不同 time_key 分配的 uint32 内部编号，从 0 开始，已提交编号不改变、不复用；用户不提供该编号。
 - 表编号只在同一个数据库 UUID 内有效；证券编号与 time_code 还必须绑定对应 table_id。
-- 范围接口对真实 time_key 使用 `[start, end_exclusive)`。起点为 uint32，终点为 uint64，可取 `2^32`。
-- `start == end_exclusive` 返回空结果；终点小于起点或大于 `2^32` 返回参数错误。闭区间调用方可使用 64 位运算把 `y` 转为 `y + 1`。
+- shell、C、Python、Java 及网络协议的范围查询统一对真实 time_key 使用闭区间 `[start, end]`。两端合法范围均为 `0…UINT32_MAX`。
+- C 接口与协议仍用 uint64 承载终点，以检测越界而不发生截断；`2^32` 不再是合法的对外终点。
+- `start == end` 查询该时点，有行情则返回一条，无行情则返回空结果；`start > end` 返回参数错误。
+- 核心入口将闭区间终点提升为 uint64 后加 1，内部游标仍保存排除终点并按 `< end_exclusive` 扫描；最大时间键不会回绕。
+- 分段查询须避免端点重叠；处理完 `[a, b]` 后，下一段从规范化时间键 `b + 1` 开始，若 b 已为 UINT32_MAX 则结束。
+  加 1 按秒、分钟或天的时间键精度计算，不按表周期或交易日历推算。
 
 例如，在一个尚无数据的 3 分钟表中首次按顺序写入同一天的 09:30、09:33、09:36，
 数据库可依次分配内部编号 0、1、2。任何股票的同一规范化时间均复用同一个编号。
@@ -201,8 +205,8 @@ period_count 用于描述调用方提供的行情，不用于用除法猜测不�
 
 这三类键都使用 uint32，经表级映射转换为独立的 `time_code`；不存在全库共用的时间编号。
 `5s` 同样允许 `09:30:17`，`3mo` 和 `2y` 同样允许任意合法日期。周期计数不参与时间键计算。
-原有 minute/day 的单位编号和含义不变；新单位仅扩展元数据枚举，不改变磁盘布局、网络帧或 C 结构宽度，
-因此仍为磁盘格式 5 / 协议 4 / ABI 2。读写新周期需要支持这些单位的库、服务和客户端；
+原有 minute/day 的单位编号和含义不变；新周期仅扩展元数据枚举，不改变磁盘布局、网络帧或 C 结构宽度。
+当前版本因范围查询统一闭区间，采用磁盘格式 5 / 协议 5 / ABI 3。读写新周期需要支持这些单位的库、服务和客户端；
 旧版不识别新周期，创建新周期表后不应回退旧版。Java JAR 与 JNI 必须配套更新。
 
 
@@ -851,12 +855,12 @@ TLS 传输层不改变核心数据库的 C17 数据格式。
 
 ### 14.2 帧头
 
-协议版本为 4，独立于磁盘格式版本 5；所有整数小端。固定帧头 32 B：
+协议版本为 5，独立于磁盘格式版本 5；所有整数小端。固定帧头 32 B：
 
 | 偏移 | 类型 | 含义 |
 |---:|---|---|
 | 0 | uint32 | magic，ASCII `OHLC` |
-| 4 | uint16 | version = 4 |
+| 4 | uint16 | version = 5 |
 | 6 | uint16 | opcode |
 | 8 | uint32 | flags：RESPONSE=1，FINAL=2 |
 | 12 | uint32 | body_length |
@@ -878,7 +882,7 @@ TLS 传输层不改变核心数据库的 C17 数据格式。
 | 2 | PING | 空 | 空 |
 | 3 | RESOLVE | table_id:uint32、长度前缀 ticker | ticker_code:uint32 |
 | 4 | DICTIONARY | table_id:uint32、start_code:uint32、limit:uint32 | 快照序号、条目数、编号与字符串列表 |
-| 5 | SERIES | table_id:uint32、code:uint32、start:uint32、end_exclusive:uint64 | 行情结果分块 |
+| 5 | SERIES | table_id:uint32、code:uint32、start:uint32、end:uint64（含终点，最大 UINT32_MAX） | 行情结果分块 |
 | 6 | CROSS | table_id:uint32、time_key:uint32，可选证券集合（见下文） | 行情结果分块 |
 | 7 | REGISTER | table_id:uint32、长度前缀 ticker | code:uint32、commit_seq:uint64 |
 | 8 | WRITE | table_id:uint32、count:uint32、count 条 40 B 写入记录 | commit_seq:uint64 |
@@ -1031,14 +1035,14 @@ WAL 计数边界取自捕获快照时，不将刷盘期间的新日志误算为�
 | 表创建、打开、列举 | 固定 schema；创建需写权限；返回绑定 UUID 的表句柄或表描述 |
 | 证券解析、注册 | 使用指定表的字典，返回表内稳定编号；可选注册需写权限 |
 | 批量写入 | 在指定表中原子提交一个批次，返回提交序号 |
-| 单股查询 | 输入表、证券和真实时间半开范围，返回流式游标 |
+| 单股查询 | 输入表、证券和真实时间闭区间，返回流式游标 |
 | 横截面查询 | 输入表和真实时间，按证券编号返回流式游标 |
 | 游标读取、关闭 | 有界结果块；关闭或取消释放读根与在途资源 |
 
 C 新增 `ohlc_cross_tickers` / `ohlc_client_cross_tickers`，以精确字节名称数组指定横截面集合。
 名称仅在调用期间借用，游标拥有排序去重后的编号数组，直到关闭时释放并计入引擎内存预算。
 未知名称和该时间缺失的行情不输出；同一快照内解析名称和读取行情，避免分次查询混用快照。
-原有 C、Python、Java 单股范围 API 仍为半开区间；shell 闭区间语法由客户端换算，不改变 SDK 契约。
+C、Python、Java 的网络与嵌入式单股范围 API 和 shell 均为闭区间；调用方直接传入最后一个要查询的时间，不再预先加 1。
 
 SDK 和 shell 接受普通日期时间，并根据表定义转换为规范化 time_key；协议和引擎入口仍使用固定宽度整数。
 日期时间解析、时区换算在批量准备阶段完成，不在提取每条结果的存储热路径中重复执行。
@@ -1188,8 +1192,8 @@ ohlc --socket /run/ohlc/ohlcd.sock --file queries.ohlc
 
 `series` 使用 `from START and END` 表示闭区间 `[START, END]`，包含两端；旧 `to` 语法移除。
 规范化起点与终点、`cross` 时间及写入时间均限制在 uint32 范围；shell 不接受 `@4294967296`。
-起点大于终点时拒绝；起点等于终点时查询该时点。shell 将终点提升到 uint64 后加 1，
-转换为引擎半开区间的排除边界；最大终点 `@4294967295` 不回绕。
+起点大于终点时拒绝；起点等于终点时查询该时点。shell 将闭区间终点直接交给 C 客户端和协议，
+由引擎入口统一转换为内部 uint64 排除边界；最大终点 `@4294967295` 不回绕。
 加 1 的单位是规范化时间键（秒、分钟或天），不是表的 Ns/Nm/Nd/Nmo/Ny 周期；不扩展到当日结束或下一个周期。
 
 `cross TABLE TIME and ticker in ('AAPL', 'GOOGL', 'INTL')` 指定证券集合；不带子句仍查询全部证券。
@@ -1934,7 +1938,7 @@ ctest --test-dir build-tsan -R concurrency --output-on-failure
 ### 22.1 版本与平台契约
 
 基准第一版对应软件 `0.1.0-beta.1`，RPM 版本为 `0.1.0~beta.1`，Python 版本为 `0.1.0b1`。
-磁盘格式为 5，网络协议为 4，C ABI 编号为 2，行情行长为 32 B。
+磁盘格式为 5，网络协议为 5，C ABI 编号为 3，行情行长为 32 B。
 运行库提供 `ohlc_version()` 和 `ohlc_abi_version()`；Python 与 JNI 在传入原生结构前检查 ABI。
 同一部署使用同一发布版本的头文件、运行库和语言封装。磁盘格式或 ABI 发生不兼容变化时，
 必须更改对应编号并明确数据重建或迁移要求。
@@ -2012,7 +2016,7 @@ SELinux 开启环境的策略与自定义数据目录标签需要独立验证。
 
 ### 22.4 运维查询
 
-协议 4 保留 opcode 12 `STATS` 和 13 `CHECKPOINT`，请求体均为空。
+协议 5 保留 opcode 12 `STATS` 和 13 `CHECKPOINT`，请求体均为空。
 STATS 需要读取权限，返回 11 项小端 uint64，顺序为：
 `commit_seq, checkpoint_seq, ticker_count, table_count, memory_bytes, disk_read_bytes,
 disk_read_calls, cache_hits, cache_misses, wal_bytes, data_bytes`。
@@ -2125,3 +2129,18 @@ macOS 定向功能验收通过，包含边界、历史补录、WAL 重开和检�
 
 随后 Release 7 补齐 `help insert;` 的五类周期示例，完成 EL8/EL9 构建及 RHEL 9 测试机升级；
 安装后的实际帮助输出与原有数据保持检查通过，见 [insert 帮助验收](test-report.md#insert-帮助示例补全2026-09-28)。
+
+## 26. 范围查询统一闭区间（2026-09-28）
+
+全部对外 series 接口采用第 3.2 节的 `[start, end]`，覆盖 C、Python、Java 网络与嵌入式接口、
+shell 及二进制协议。内部游标保留半开边界，不改变索引、分块布局、时间映射或结果排序。
+C 与协议保留终点的 uint64 参数宽度以明确拒绝越界值，合法值仍限定在 uint32。
+
+这属于接口语义变更：ABI 由 2 升为 3、协议由 4 升为 5，Python/JNI ABI 检查及协议版本检查拒绝不匹配组合。
+既有调用方需取消为包含最后一条记录而额外加 1 的处理，全范围查询终点改为 UINT32_MAX，
+分段读取避免重复包含相邻段的公共端点。磁盘格式仍为 5，现有格式 5 数据无需转换。
+
+macOS 构建、六项定向检查及 C/Python/Java 嵌入式示例运行通过，详见
+[闭区间验收](test-report.md#范围查询闭区间验收2026-09-28)。随后完成 Release 8 的 EL8/EL9 RPM 构建及
+RHEL 9 测试服务器升级，安装后闭区间、既有数据与服务重启检查通过；详见
+[闭区间 RPM 升级验收](test-report.md#闭区间-rpm-升级验收2026-09-28)。本次未作性能复测。

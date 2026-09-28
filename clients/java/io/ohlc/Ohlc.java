@@ -273,7 +273,7 @@ public final class Ohlc implements AutoCloseable {
         chunk = 0;
         arm(deadlineMs);
         ByteBuffer header = buffer(32);
-        header.put(new byte[] {'O', 'H', 'L', 'C'}).putShort((short) 4).putShort((short) opcode)
+        header.put(new byte[] {'O', 'H', 'L', 'C'}).putShort((short) 5).putShort((short) opcode)
               .putInt(0).putInt(body.remaining()).putLong(request).putInt(0).putInt(0);
         output.write(header.array());
         ByteBuffer source = body.duplicate();
@@ -296,7 +296,7 @@ public final class Ohlc implements AutoCloseable {
         byte[] header = new byte[32];
         input.readFully(header);
         ByteBuffer fields = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN);
-        if (fields.getInt() != 0x434c484f || fields.getShort() != 4 ||
+        if (fields.getInt() != 0x434c484f || fields.getShort() != 5 ||
                 Short.toUnsignedInt(fields.getShort()) != opcode) {
             throw corrupt("Invalid response header");
         }
@@ -743,18 +743,21 @@ public final class Ohlc implements AutoCloseable {
             return write(new byte[][] {ticker.getBytes(StandardCharsets.UTF_8)}, row.flip());
         }
 
+        /** Query the closed range [start, end], using dates or timestamps. */
         public Query series(String ticker, String start, String end) throws IOException {
-            return series(resolve(ticker), timeKey(start),
-                          end.equals("@4294967296") ? 0x100000000L : timeKey(end));
+            return series(resolve(ticker), timeKey(start), timeKey(end));
         }
 
-        public Query series(long ticker, long start, long endExclusive) throws IOException {
-            if (endExclusive < start || endExclusive > 0x100000000L) {
-                throw new IllegalArgumentException("Invalid half-open range");
+        /** Query both uint32 endpoints; equal bounds query one time. */
+        public Query series(long ticker, long start, long end) throws IOException {
+            uint32(start);
+            uint32(end);
+            if (end < start) {
+                throw new IllegalArgumentException("End must not precede start");
             }
             ByteBuffer body = buffer(20).putInt(uint32(id)).putInt(uint32(ticker))
-                .putInt(uint32(start)).putLong(endExclusive).flip();
-            return query(5, body, id, start, endExclusive);
+                .putInt(uint32(start)).putLong(end).flip();
+            return query(5, body, id, start, end + 1);
         }
 
         public Query cross(String time) throws IOException {

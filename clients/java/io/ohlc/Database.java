@@ -36,7 +36,7 @@ public final class Database implements AutoCloseable {
             } else {
                 System.load(Path.of(path).toAbsolutePath().toString());
             }
-            if (abiVersion() != 2) {
+            if (abiVersion() != 3) {
                 throw new UnsatisfiedLinkError("Incompatible ohlc native ABI");
             }
         }
@@ -456,20 +456,22 @@ public final class Database implements AutoCloseable {
             return write(new byte[][] {ticker.getBytes(StandardCharsets.UTF_8)}, row.flip());
         }
 
+        /** Query the closed range [start, end], using dates or timestamps. */
         public Query series(String ticker, String start, String end) throws IOException {
-            return series(resolve(ticker), timeKey(start),
-                          end.equals("@4294967296") ? 0x100000000L : timeKey(end));
+            return series(resolve(ticker), timeKey(start), timeKey(end));
         }
 
-        public Query series(long ticker, long start, long endExclusive) throws IOException {
+        /** Query both uint32 endpoints; equal bounds query one time. */
+        public Query series(long ticker, long start, long end) throws IOException {
             Ohlc.uint32(ticker);
             Ohlc.uint32(start);
-            if (endExclusive < 0 || endExclusive > 0x100000000L) {
-                throw new IllegalArgumentException("End must be in 0..2^32");
+            Ohlc.uint32(end);
+            if (end < start) {
+                throw new IllegalArgumentException("End must not precede start");
             }
             state.lifecycle.readLock().lock();
             try {
-                return query(Native.series(state.requireOpen(), id, ticker, start, endExclusive));
+                return query(Native.series(state.requireOpen(), id, ticker, start, end));
             } finally {
                 Reference.reachabilityFence(this);
                 Reference.reachabilityFence(Database.this);

@@ -485,8 +485,8 @@ static void* checkpoint_worker(void* argument) {
 
 int main(int argc, char** argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        printf("ohlcd %s (ABI %u, format %u, protocol 4)\n", ohlc_version(), OHLC_ABI_VERSION,
-               OHLC_FORMAT_VERSION);
+        printf("ohlcd %s (ABI %u, format %u, protocol %u)\n", ohlc_version(), OHLC_ABI_VERSION,
+               OHLC_FORMAT_VERSION, OHLC_PROTOCOL_VERSION);
         return 0;
     }
     ohlc_server_config config;

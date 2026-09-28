@@ -16,7 +16,7 @@ def main():
             ("AAPL", "20260901 09:30:00", (10000, 10100, 9950, 10080, 1200, 12100000, 1000000)),
             ("AAPL", "20260901 09:33:00", (10080, 10120, 10000, 10100, 900, 9100000, 1000000)),
         ])
-        with table.series("AAPL", "20260901 09:30:00", "20260901 09:36:00") as query:
+        with table.series("AAPL", "20260901 09:30:00", "20260901 09:33:00") as query:
             for chunk in query:
                 for time_key, *row in chunk.rows():
                     print(table.format_time(time_key), row)

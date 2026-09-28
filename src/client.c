@@ -504,7 +504,7 @@ static ohlc_status query_start(ohlc_client* client, uint16_t opcode, const uint8
         client->emitted = 0;
         client->sequence = 0;
         client->start = opcode == 5 ? ohlc_get_u32(body + 8) : 0;
-        client->end = opcode == 5 ? ohlc_get_u64(body + 12) : UINT64_C(4294967296);
+        client->end = opcode == 5 ? ohlc_get_u64(body + 12) + 1 : UINT64_C(4294967296);
         uint32_t timeout = client->timeout_ms < client->info.max_query_ms
                                ? client->timeout_ms
                                : client->info.max_query_ms;
@@ -514,15 +514,15 @@ static ohlc_status query_start(ohlc_client* client, uint16_t opcode, const uint8
 }
 
 ohlc_status ohlc_client_series(ohlc_client* client, uint32_t table_id, uint32_t ticker,
-                               uint32_t start, uint64_t end_exclusive) {
-    if (end_exclusive > UINT64_C(4294967296) || end_exclusive < start) {
+                               uint32_t start, uint64_t end) {
+    if (end > UINT32_MAX || end < start) {
         return OHLC_INVALID;
     }
     uint8_t body[20];
     ohlc_put_u32(body, table_id);
     ohlc_put_u32(body + 4, ticker);
     ohlc_put_u32(body + 8, start);
-    ohlc_put_u64(body + 12, end_exclusive);
+    ohlc_put_u64(body + 12, end);
     return query_start(client, 5, body, sizeof(body));
 }
 

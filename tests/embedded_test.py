@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "python"))
 from ohlc import Database, DatabaseOptions, Error
+from series_contract import check_closed_series
 
 
 EXTREMES = (-2147483648, 2147483647, -1, 0, 4294967295, 18446744073709551615, 4294967295)
@@ -97,7 +98,7 @@ def python_contract(path, library):
         assert results(snapshot) == [(code, *EXTREMES), (binary, *((0,) * 7))]
         assert results(minute.cross(key))[0] == (code, *((1,) * 7))
         minute.insert("AAPL", key, EXTREMES)
-        with minute.series("AAPL", key, key + 1800) as query:
+        with minute.series("AAPL", key, key + 1797) as query:
             chunks = list(query)
         expected = [(key + i * 3, *EXTREMES) for i in range(600)]
         assert [row for chunk in chunks for row in chunk.rows()] == expected
@@ -106,7 +107,7 @@ def python_contract(path, library):
         # A buffer view with an offset and trailing bytes must retain its bounds.
         output = bytearray(b"x" * (19 * 36 + 7))
         received = []
-        with minute.series("AAPL", key, key + 1800) as query:
+        with minute.series("AAPL", key, key + 1797) as query:
             while True:
                 count = query.read_into(memoryview(output)[3:-4])
                 if not count:
@@ -235,6 +236,7 @@ def extended_periods(path, library):
             assert table.time_key(stamp) == key
             table.insert("AAPL", key + 1, EXTREMES)
             table.insert("AAPL", stamp, EXTREMES)
+            check_closed_series(table, key, stamp, EXTREMES)
         require_error(1, lambda: db.create("no_zone", period="1s"))
         require_error(2, lambda: db.create("bad_zone", period="1s", timezone="Not/AZone"))
         require_error(1, lambda: db.create("year_zone", period="1y", timezone="UTC"))
@@ -246,7 +248,7 @@ def extended_periods(path, library):
                 table = db.table(name)
                 assert table.period == period and table.timezone == zone
                 assert table.time_key(table.format_time(0xffffffff)) == 0xffffffff
-                assert [row[0] for row in results(table.series("AAPL", key, key + 2))] == [key, key + 1]
+                assert [row[0] for row in results(table.series("AAPL", key, key + 1))] == [key, key + 1]
                 assert results(table.cross(stamp)) == [(0, *EXTREMES)]
             if checkpoint:
                 db.checkpoint()
@@ -269,7 +271,7 @@ def main():
                 assert table.description == "JNI \U0001f680"
                 rows = results(table.cross("20260901"))
                 assert rows == [(db.table("java_day").resolve("JAVA"), *EXTREMES)]
-                assert len(results(table.series("JAVA", "20260901", "20260905"))) == 4
+                assert len(results(table.series("JAVA", "20260901", "20260904"))) == 4
     print("embedded Python, snapshots, buffer ownership, close races and file recovery: OK")
 
 

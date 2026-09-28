@@ -251,7 +251,7 @@ static void check_series(ohlc_db* db, uint32_t table, uint32_t stock, uint32_t f
     OK(ohlc_series(db, table, stock, first, end, &cursor));
     uint8_t output[19 * OHLC_RESULT_BYTES];
     size_t count = 0;
-    uint32_t expected = first;
+    uint64_t expected = first;
     do {
         OK(ohlc_cursor_next(cursor, output, 19, &count));
         for (size_t i = 0; i < count; i++) {
@@ -265,8 +265,63 @@ static void check_series(ohlc_db* db, uint32_t table, uint32_t stock, uint32_t f
             expected++;
         }
     } while (count != 0);
-    CHECK(expected == end);
+    CHECK(expected == (uint64_t)end + 1);
     ohlc_cursor_close(cursor);
+}
+
+static void test_closed_series(void) {
+    char path[] = "/tmp/ohlc-closed-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"closed", OHLC_DAY, 1, "", ""};
+    ohlc_table_info table;
+    OK(ohlc_table_create(db, &definition, &table));
+    const uint32_t keys[] = {UINT32_MAX, 7, 1, 0};
+    uint8_t rows[4 * OHLC_WRITE_BYTES];
+    for (size_t i = 0; i < 4; i++) {
+        ohlc_row value = {0};
+        value.amount = keys[i];
+        ohlc_write_encode(rows + i * OHLC_WRITE_BYTES, 0, keys[i], &value);
+    }
+    ohlc_bytes ticker = {"AAPL", 4};
+    uint64_t sequence;
+    OK(ohlc_write_named(db, table.id, &ticker, 1, rows, 4, &sequence));
+    const struct {
+        uint32_t start;
+        uint32_t end;
+        uint32_t expected[4];
+        size_t count;
+    } ranges[] = {{0, 0, {0}, 1},
+                  {0, 1, {0, 1}, 2},
+                  {1, 7, {1, 7}, 2},
+                  {2, 6, {0}, 0},
+                  {2, 2, {0}, 0},
+                  {UINT32_MAX, UINT32_MAX, {UINT32_MAX}, 1},
+                  {0, UINT32_MAX, {0, 1, 7, UINT32_MAX}, 4}};
+    for (size_t i = 0; i < sizeof(ranges) / sizeof(ranges[0]); i++) {
+        ohlc_cursor* cursor = NULL;
+        OK(ohlc_series(db, table.id, 0, ranges[i].start, ranges[i].end, &cursor));
+        uint8_t result[OHLC_RESULT_BYTES];
+        size_t count;
+        for (size_t j = 0; j < ranges[i].count; j++) {
+            OK(ohlc_cursor_next(cursor, result, 1, &count));
+            CHECK(count == 1 && ohlc_get_u32(result) == ranges[i].expected[j]);
+        }
+        OK(ohlc_cursor_next(cursor, result, 1, &count));
+        CHECK(count == 0);
+        ohlc_cursor_close(cursor);
+    }
+    ohlc_cursor* cursor = NULL;
+    CHECK(ohlc_series(db, table.id, 0, 7, 1, &cursor) == OHLC_INVALID && cursor == NULL);
+    CHECK(ohlc_series(db, table.id, 0, 0, UINT64_C(1) << 32, &cursor) == OHLC_INVALID &&
+          cursor == NULL);
+    CHECK(ohlc_series(db, table.id, 0, 0, UINT64_MAX, &cursor) == OHLC_INVALID && cursor == NULL);
+    OK(ohlc_close(db));
+    remove_directory(path);
 }
 
 static void test_database(void) {
@@ -333,7 +388,7 @@ static void test_database(void) {
     CHECK(ohlc_write(db, table.id, rows, 1, &rejected_sequence) == OHLC_LIMIT);
     CHECK(rejected_sequence == UINT64_MAX);
     db->allocator.limit = memory_limit;
-    check_series(db, table.id, 16, 1, 1101, false);
+    check_series(db, table.id, 16, 1, 1100, false);
     ohlc_cursor* snapshot = NULL;
     OK(ohlc_cross(db, table.id, 17, &snapshot));
     ohlc_row zero = {0};
@@ -360,10 +415,10 @@ static void test_database(void) {
         ohlc_write_encode(rows + (size_t)stock * OHLC_WRITE_BYTES, stock, 0, &row);
     }
     OK(ohlc_write(db, table.id, rows, 33, &seq));
-    check_series(db, table.id, 16, 0, 1101, true);
+    check_series(db, table.id, 16, 0, 1100, true);
     OK(ohlc_close(db));
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 16, 0, 1101, true);
+    check_series(db, table.id, 16, 0, 1100, true);
     OK(ohlc_cross(db, daily.id, 17, &snapshot));
     OK(ohlc_cursor_next(snapshot, result, 40, &count));
     CHECK(count == 1 && ohlc_get_u32(result) == 16);
@@ -396,7 +451,7 @@ static void test_database(void) {
     CHECK(pwrite(fd, &catalog_byte, 1, (off_t)bad_offset) == 1);
     CHECK(close(fd) == 0);
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 16, 0, 1101, true);
+    check_series(db, table.id, 16, 0, 1100, true);
     OK(ohlc_checkpoint(db));
     OK(ohlc_close(db));
     snprintf(current, sizeof(current), "%s/CURRENT.0", path);
@@ -418,7 +473,7 @@ static void test_database(void) {
     CHECK(write(fd, "unfinished", 10) == 10);
     CHECK(close(fd) == 0);
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 16, 0, 1101, true);
+    check_series(db, table.id, 16, 0, 1100, true);
     OK(ohlc_close(db));
     char orphan[1024];
     snprintf(orphan, sizeof(orphan), "%s/tables/00000001/data-000099.dat", path);
@@ -426,7 +481,7 @@ static void test_database(void) {
     CHECK(fd >= 0 && write(fd, "orphan", 6) == 6);
     CHECK(close(fd) == 0);
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 16, 0, 1101, true);
+    check_series(db, table.id, 16, 0, 1100, true);
     OK(ohlc_close(db));
     pid_t child = fork();
     CHECK(child >= 0);
@@ -441,14 +496,14 @@ static void test_database(void) {
     CHECK(waitpid(child, &child_status, 0) == child);
     CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 16, 2000, 2001, false);
+    check_series(db, table.id, 16, 2000, 2000, false);
     OK(ohlc_close(db));
     snprintf(orphan, sizeof(orphan), "%s/wal-000002.log", path);
     fd = open(orphan, O_WRONLY | O_CREAT | O_EXCL, 0600);
     CHECK(fd >= 0 && write(fd, "OHLCFIL", 7) == 7);
     CHECK(close(fd) == 0);
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 16, 2000, 2001, false);
+    check_series(db, table.id, 16, 2000, 2000, false);
     OK(ohlc_close(db));
     char data_path[1024];
     snprintf(data_path, sizeof(data_path), "%s/tables/00000001/data-000001.dat", path);
@@ -642,7 +697,7 @@ static void test_wal_retention(void) {
     CHECK(faccessat(db->directory_fd, "wal-000002.log", F_OK, 0) == 0);
     OK(ohlc_close(db));
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 0, 1, 301, false);
+    check_series(db, table.id, 0, 1, 300, false);
     OK(ohlc_close(db));
 
     /* The older CURRENT must recover through retained segments after cleanup. */
@@ -652,7 +707,7 @@ static void test_wal_retention(void) {
     CHECK(fd >= 0 && pwrite(fd, "broken", 6, 0) == 6);
     CHECK(close(fd) == 0);
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 0, 1, 301, false);
+    check_series(db, table.id, 0, 1, 300, false);
     OK(ohlc_checkpoint(db));
     if (getenv("OHLC_TEST_RECLAIM_FAILURES") != NULL) {
         OK(ohlc_close(db));
@@ -668,7 +723,7 @@ static void test_wal_retention(void) {
         CHECK(waitpid(child, &status, 0) == child);
         CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 86);
         OK(ohlc_open(path, &options, &db));
-        check_series(db, table.id, 0, 1, 301, false);
+        check_series(db, table.id, 0, 1, 300, false);
     } else {
         OK(ohlc_checkpoint(db));
     }
@@ -683,7 +738,7 @@ static void test_wal_retention(void) {
     CHECK(fd >= 0 && pwrite(fd, "covered", 7, 4096) == 7);
     CHECK(close(fd) == 0);
     OK(ohlc_open(path, &options, &db));
-    check_series(db, table.id, 0, 1, 301, false);
+    check_series(db, table.id, 0, 1, 300, false);
     OK(ohlc_close(db));
     CHECK(unlink(filename) == 0);
     CHECK(ohlc_open(path, &options, &db) == OHLC_CORRUPT && db == NULL);
@@ -752,7 +807,7 @@ static void test_drop_recovery(void) {
     OK(ohlc_close(db));
     OK(ohlc_open(path, &options, &db));
     CHECK(ohlc_table_get(db, old.id, &old) == OHLC_NOT_FOUND);
-    check_series(db, replacement.id, ticker, 1, 2, false);
+    check_series(db, replacement.id, ticker, 1, 1, false);
     OK(ohlc_close(db));
     remove_directory(path);
 }
@@ -1009,6 +1064,7 @@ static void test_selected_cross(void) {
 }
 
 int main(void) {
+    test_closed_series();
     test_selected_cross();
     test_table_dictionaries();
     test_format();

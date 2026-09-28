@@ -304,12 +304,12 @@ static query_measurement measure_query(workload* work, bool cross, uint32_t stoc
     if (work->db != NULL) {
         require(cross ? ohlc_cross(work->db, work->table.id, first, &cursor)
                       : ohlc_series(work->db, work->table.id, stock, first,
-                                    (uint64_t)first + length, &cursor),
+                                    (uint64_t)first + length - 1, &cursor),
                 "query start");
     } else {
         require(cross ? ohlc_client_cross(work->client, work->table.id, first)
                       : ohlc_client_series(work->client, work->table.id, stock, first,
-                                           (uint64_t)first + length),
+                                           (uint64_t)first + length - 1),
                 "network query start");
     }
     uint64_t digest = 0;

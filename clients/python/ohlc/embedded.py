@@ -343,7 +343,8 @@ class EmbeddedTable(Table):
         return sequence.value
 
     def series(self, ticker, start, end):
-        end = 1 << 32 if end == "@4294967296" or end == 1 << 32 else self.time_key(end)
+        """Query [start, end], including both times; both keys must fit uint32."""
+        end = self.time_key(end)
         return self.connection._query(self.id, self.resolve(ticker),
                                       self.time_key(start), end)
 

@@ -33,13 +33,41 @@ public final class JavaClientTest {
                 assert table.timeKey("20260918") == key + 1;
             }
             table.insert("AAPL", stamp, 1, 2, 0, 1, 3, 4, 1000000);
+            table.insert("AAPL", "@" + (key + 1), 1, 2, 0, 1, 3, 4, 1000000);
+            table.insert("AAPL", "@" + (key + 2), 1, 2, 0, 1, 3, 4, 1000000);
+            table.insert("AAPL", "@4294967295", 1, 2, 0, 1, 3, 4, 1000000);
             try (Ohlc.Query query = table.series("AAPL", stamp, "@" + (key + 1))) {
                 int rows = 0;
                 Ohlc.Chunk chunk;
                 while ((chunk = query.next()) != null) {
                     rows += chunk.count();
                 }
-                assert rows == 1;
+                assert rows == 2;
+            }
+            long[][] ranges = {{key, key, 1}, {key + 3, key + 3, 0},
+                               {0xffffffffL, 0xffffffffL, 1}};
+            for (long[] range : ranges) {
+                try (Ohlc.Query query = table.series(table.resolve("AAPL"), range[0], range[1])) {
+                    int rows = 0;
+                    Ohlc.Chunk chunk;
+                    while ((chunk = query.next()) != null) {
+                        rows += chunk.count();
+                    }
+                    assert rows == range[2];
+                }
+            }
+            long[][] invalid = {{key + 1, key}, {key, 0x100000000L}, {key, -1}};
+            for (long[] range : invalid) {
+                try (Ohlc.Query query = table.series(table.resolve("AAPL"), range[0], range[1])) {
+                    throw new AssertionError("Invalid closed range accepted: " + query);
+                } catch (IllegalArgumentException expected) {
+                    // Rejection must occur before a query takes ownership of the connection.
+                }
+            }
+            try (Ohlc.Query query = table.series("AAPL", stamp, "@4294967296")) {
+                throw new AssertionError("Out-of-range endpoint accepted: " + query);
+            } catch (IllegalArgumentException expected) {
+                // The former exclusive sentinel is not a valid inclusive time key.
             }
             client.drop("java_period");
         }
@@ -69,7 +97,7 @@ public final class JavaClientTest {
             client.drop("java_drop");
             assert client.dictionary(1, 0, 128).size() == 2;
             long count = 0;
-            try (Ohlc.Query query = table.series("AAPL", "20260901 09:30:00", "@4294967296")) {
+            try (Ohlc.Query query = table.series("AAPL", "20260901 09:30:00", "@4294967295")) {
                 Ohlc.Chunk chunk;
                 while ((chunk = query.next()) != null) {
                     ByteBuffer rows = chunk.data();

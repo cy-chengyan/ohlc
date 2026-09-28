@@ -935,3 +935,70 @@ EL8/EL9 产物位于 `/home/ohlc/rpm-env/artifacts/el8/` 和 `el9/` 下的
 [已安装帮助输出](../build/acceptance/rpm-insert-help-20260928/help-insert.txt)、
 [验收元数据](../build/acceptance/rpm-insert-help-20260928/validation.json)。
 EL8 使用共享 RHEL 9 内核的 UBI 用户空间；本次未作性能、ARM64 或真实断电复测，RPM 未签名。
+
+## 范围查询闭区间验收（2026-09-28）
+
+C、Python、Java 的网络和嵌入式接口、shell 及二进制协议统一为 `[start, end]`。
+macOS 严格警告构建通过；C ABI 为 3、网络协议为 5、磁盘格式保持 5。
+定向运行以下六项 CTest，最终全部通过：
+
+| 检查 | 耗时 | 覆盖 |
+|---|---:|---|
+| core | 0.15 秒 | 零值、相等端点、缺失时间、稀疏历史补录、最大 uint32 键及逆序和越界拒绝 |
+| pipeline | 0.04 秒 | 读写管线、游标分块与单点读取 |
+| embedded | 3.41 秒 | Python、Java/JNI 的闭区间边界、WAL 与检查点重开路径 |
+| network | 1.04 秒 | C 网络库、Python、Java、shell、原始协议边界及协议 4 拒绝；shell 状态显示协议 5 |
+| transport | 10.04 秒 | 更新协议版本后的 TCP/TLS、鉴权与连接故障回归 |
+| admin | 3.20 秒 | 检查、备份和恢复路径，完整扫描使用 UINT32_MAX 作为终点 |
+
+边界用例同时保存终点后一条记录，验证查询包含终点且不多返回下一条；
+终点 `4294967295` 可查询，旧排除边界 `4294967296` 被拒绝。
+分钟、日、秒、月、年接口路径均有覆盖；未更改时间精度或按周期取整。
+C、Python、Java 的嵌入式示例分别实际返回 3、2、2 条行情，均包含示例最后时点。
+clang-format 21.1.8、Python 语法及 diff 空白检查通过。
+
+首次 network/transport 运行被沙箱禁止本地监听，允许本地套接字后通过。
+补查 shell 版本显示时，测试曾在建立连接前读取状态；改为先 PING 再读取状态后通过。
+示例检查曾误将 UTC 输出按本地时间比较，修正检查预期后通过，示例的时间格式化逻辑未改动。
+
+证据：[构建日志](../build/acceptance/closed-series-20260928/build.log)、
+[首次定向检查](../build/acceptance/closed-series-20260928/ctest.log)、
+[网络与传输复验](../build/acceptance/closed-series-20260928/network-transport.log)、
+[最终网络检查](../build/acceptance/closed-series-20260928/network-final.log)、
+[示例结果](../build/acceptance/closed-series-20260928/examples.json)、
+[验收元数据](../build/acceptance/closed-series-20260928/validation.json)。
+内部扫描仍使用 uint64 排除边界，索引和存储布局未修改；本次未作性能测量，不能据此报告性能增减。
+本次尚未构建 RPM、更新测试服务器或作 Linux、ARM64、真实断电验收。
+
+## 闭区间 RPM 升级验收（2026-09-28）
+
+基于 `fb1b6e9600e2ee5685089982e277ebe9a9dee30d` 加闭区间修订及 RPM Release 8 构建源码快照，
+保留完整差异和逐文件校验清单。归档 SHA-256 为
+`821675a946a898ad1aacdfecad20c91cc4bd24dd7569f909f1ed60943b0684a1`。
+服务端、C 运行库、shell、Python、Java/JNI 配套升级至协议 5 / ABI 3，磁盘格式保持 5。
+
+| 验证范围 | 结果 |
+|---|---|
+| EL8 / EL9 构建 | 两套 `0.1.0~beta.1-8` RPM 成功；各自 11/11 项检查通过，耗时 9.62 / 9.59 秒 |
+| 产物完整性 | 每套包含 8 个功能包、7 个调试包及 1 个 SRPM；RPM 摘要与 SHA-256 清单通过，安装前再次核对 |
+| 备份与升级 | 数据库和配置备份完成；RHEL 9.4 x86-64 实机的 8 个功能包由 Release 7 原地升级至 Release 8 |
+| 配置与既有数据 | 主配置与 systemd override 的 SHA-256 不变；升级前后 UUID、提交序号、表元数据、证券编号及全部行情摘要一致 |
+| 闭区间边界 | 安装后的 shell、Python 网络与嵌入式、Java 网络与 JNI 均覆盖秒/分钟/日/月/年；包含终点、相等端点、缺失时间、最大 uint32 键、逆序和越界拒绝通过 |
+| 协议版本 | shell 状态显示协议 5；服务拒绝协议 4，避免旧客户端误解终点语义 |
+| 持久性路径 | Python 与 JNI 的独立测试库检查点重开通过；服务重启后原表及临时表的全部元数据和行情摘要一致 |
+| 最终状态 | 5 张临时表已删除，原有表和行情保持一致；服务 active/running 且 enabled，开发机通过局域网读取全部原有行情并核对摘要通过 |
+
+最终仍只有 `a_stock_1d` 表、1 个证券和 1 条行情。验收创建和删除临时表使提交序号由 37 增至 52；
+未迁移、重新导入或修改既有行情。服务继续使用 `/ssd01/ohlc` 和 TCP `192.168.7.188:8765`。
+数据库及配置备份保存在 `/home/ohlc/rpm-env/deployments/20260928T043043Z-closed-series-release8/`，
+两份备份文件权限均为 0600；Python/JNI 的嵌入式验证使用该目录内的独立测试库。
+
+两套产物位于 `/home/ohlc/rpm-env/artifacts/el8/` 和 `el9/` 下的
+`20260928T043043Z-snapshot-821675a946a8/`，两套 `latest` 链接均已更新。
+重建相同快照使用 `/home/ohlc/rpm-env/bin/build-closed-series-821675a946a8 all`。
+
+证据：[构建日志](../build/acceptance/rpm-closed-series-20260928/build-el8-el9.log)、
+[安装日志](../build/acceptance/rpm-closed-series-20260928/install.log)、
+[局域网检查](../build/acceptance/rpm-closed-series-20260928/lan-check.json)、
+[验收元数据](../build/acceptance/rpm-closed-series-20260928/validation.json)。
+EL8 验证使用 UBI 用户空间并共享 RHEL 9 内核；本次没有性能、ARM64 或真实断电验收，RPM 未签名。
