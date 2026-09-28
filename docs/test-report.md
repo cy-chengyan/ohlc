@@ -808,3 +808,38 @@ clang-format 21.1.8、Python 语法与 diff 空白检查通过，没有重跑数
 [快捷键帮助](../build/acceptance/shell-editor-20260928/help-keys.txt)、
 [结果元数据](../build/acceptance/shell-editor-20260928/validation.json)。
 本次未构建新 RPM、未更新测试服务器，亦未作 Linux 或性能验收。
+
+## shell RPM 升级验收（2026-09-28）
+
+基于已提交源码 `819d4fec3a6dc855c12fc64f35761fd1cdd76383`，仅增加 RPM Release 5
+及对应 changelog 后打包；源码归档 SHA-256 为
+`f577e29f68c2dac815b88ce3eb9581bb62fee8529b22906cd54ba0610352675e`。
+沿用测试机 `/home/ohlc/rpm-env` 的隔离构建环境；磁盘格式 5、协议 4、C ABI 2 不变。
+
+| 验证范围 | 结果 |
+|---|---|
+| EL8 / EL9 构建 | 两套 `0.1.0~beta.1-5` RPM 均成功；各自 11/11 项检查通过，均耗时 9.36 秒 |
+| 产物完整性 | 每套生成 8 个功能包、7 个调试包及 1 个 SRPM；RPM 摘要、SHA-256 清单通过，安装前再次核对 |
+| 实机升级 | RHEL 9.4 x86-64 的 8 个功能包由 Release 4 原地升级至 Release 5，运行库和客户端等文件的 `rpm -V` 通过 |
+| 配置与数据 | 主配置和 systemd 数据目录 override 的 SHA-256 不变；既有数据库 UUID、提交序号、表元数据、证券编号和全部行情摘要与升级前一致 |
+| 服务 | `ohlc.service` 为 active/running，保留 enabled；继续使用 `/ssd01/ohlc` 和 TCP `192.168.7.188:8765` |
+| 安装后查询 | 分钟/日级 `series` 包含终点，拒绝旧 `to`；`cross` 指定证券集合、忽略未知证券、去重与排序通过 |
+| 安装后交互 | `/usr/bin/ohlc` 真实 PTY 快捷键、增量反向搜索、草稿恢复、20/40 列显示及历史隐私检查通过；帮助包含日级示例和 `help keys` |
+| 局域网 | 本地开发机到 `192.168.7.188:8765` 的 PING / STATS 读取成功 |
+
+升级前存在 `a_stock_1d` 表、1 个证券和 1 条行情。升级后逐项比对一致。
+新功能检查使用本次独有的两张临时表，结束后删除；最终仍仅保留原表及原行情。
+未迁移或重新导入数据，未改动防火墙；配置备份留在测试机本次部署记录目录内。
+
+两套构建产物位于 `/home/ohlc/rpm-env/artifacts/el8/` 和 `el9/` 下的
+`20260928T014843Z-snapshot-f577e29f68c2/`，对应 `latest` 链接均已更新。
+安装记录：`/home/ohlc/rpm-env/deployments/20260928T014843Z-shell-release5/`。
+重建相同快照使用 `/home/ohlc/rpm-env/bin/build-shell-f577e29f68c2 all`；
+普通 `build-rpm` 入口仍引用较早的独立源码 checkout。
+
+本地证据：[构建日志](../build/acceptance/rpm-shell-20260928/build-el8-el9.log)、
+[安装日志](../build/acceptance/rpm-shell-20260928/install.log)、
+[局域网检查](../build/acceptance/rpm-shell-20260928/lan-check.txt)、
+[结果元数据](../build/acceptance/rpm-shell-20260928/validation.json)。
+EL8 验证使用 UBI 用户空间并共享 RHEL 9 内核，不代表独立 EL8 内核验收。
+本次没有性能复测、ARM64 或真实断电测试；软件包仍为未签名的本地 beta RPM。

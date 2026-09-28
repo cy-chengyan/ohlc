@@ -6,7 +6,7 @@
 
 Name:           ohlc
 Version:        0.1.0~beta.1
-Release:        4%{?dist}
+Release:        5%{?dist}
 Summary:        Fixed-row OHLC storage engine and service
 License:        Apache-2.0
 URL:            https://github.com/cy-chengyan/ohlc
@@ -193,6 +193,10 @@ getent passwd ohlc >/dev/null || \
 %{_libdir}/libohlc_jni.so
 
 %changelog
+* Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-5
+- Add inclusive shell series ranges and server-side cross ticker filters.
+- Improve help layout and examples, keyboard editing, and history search.
+
 * Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-4
 - Use per-table ticker dictionaries and atomic automatic ticker registration.
 - Update the disk format to 5, network protocol to 4, and C ABI to 2.
