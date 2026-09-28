@@ -272,6 +272,54 @@ static bool valid_utf8(const char* text) {
     return true;
 }
 
+const char* ohlc_period_suffix(ohlc_period_unit unit) {
+    switch (unit) {
+    case OHLC_SECOND:
+        return "s";
+    case OHLC_MINUTE:
+        return "m";
+    case OHLC_DAY:
+        return "d";
+    case OHLC_MONTH:
+        return "mo";
+    case OHLC_YEAR:
+        return "y";
+    default:
+        return NULL;
+    }
+}
+
+bool ohlc_period_is_date(ohlc_period_unit unit) {
+    return unit == OHLC_DAY || unit == OHLC_MONTH || unit == OHLC_YEAR;
+}
+
+ohlc_status ohlc_period_parse(const char* text, ohlc_period_unit* unit, uint32_t* count) {
+    if (text == NULL || unit == NULL || count == NULL) {
+        return OHLC_INVALID;
+    }
+    const char* suffix = text;
+    uint64_t value = 0;
+    while (*suffix >= '0' && *suffix <= '9') {
+        value = value * 10u + (unsigned int)(*suffix++ - '0');
+        if (value > UINT32_MAX) {
+            return OHLC_INVALID;
+        }
+    }
+    if (value == 0) {
+        return OHLC_INVALID;
+    }
+    static const ohlc_period_unit units[] = {OHLC_SECOND, OHLC_MINUTE, OHLC_DAY, OHLC_MONTH,
+                                             OHLC_YEAR};
+    for (size_t i = 0; i < sizeof(units) / sizeof(units[0]); i++) {
+        if (strcmp(suffix, ohlc_period_suffix(units[i])) == 0) {
+            *unit = units[i];
+            *count = (uint32_t)value;
+            return OHLC_OK;
+        }
+    }
+    return OHLC_INVALID;
+}
+
 ohlc_status ohlc_definition_validate(const ohlc_table_definition* definition) {
     if (definition == NULL || definition->name == NULL || definition->timezone == NULL ||
         definition->description == NULL || definition->period_count == 0) {
@@ -291,9 +339,8 @@ ohlc_status ohlc_definition_validate(const ohlc_table_definition* definition) {
         !valid_utf8(definition->description)) {
         return OHLC_INVALID;
     }
-    if ((definition->period_unit == OHLC_MINUTE && zone_length == 0) ||
-        (definition->period_unit == OHLC_DAY && zone_length != 0) ||
-        (definition->period_unit != OHLC_MINUTE && definition->period_unit != OHLC_DAY)) {
+    if (ohlc_period_suffix(definition->period_unit) == NULL ||
+        (ohlc_period_is_date(definition->period_unit) ? zone_length != 0 : zone_length == 0)) {
         return OHLC_INVALID;
     }
     if (strstr(definition->timezone, "..") != NULL || definition->timezone[0] == '/') {

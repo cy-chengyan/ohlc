@@ -305,11 +305,9 @@ JNIEXPORT jobjectArray JNICALL Java_io_ohlc_Database_00024Native_tables(JNIEnv* 
     return result;
 }
 
-JNIEXPORT jbyteArray JNICALL Java_io_ohlc_Database_00024Native_create(JNIEnv* env, jclass type,
-                                                                      jlong db, jbyteArray name,
-                                                                      jlong period, jboolean days,
-                                                                      jbyteArray zone,
-                                                                      jbyteArray description) {
+JNIEXPORT jbyteArray JNICALL Java_io_ohlc_Database_00024Native_createPeriod(
+    JNIEnv* env, jclass type, jlong db, jbyteArray name, jlong period, jint unit, jbyteArray zone,
+    jbyteArray description) {
     (void)type;
     char name_text[64];
     char zone_text[256];
@@ -324,7 +322,7 @@ JNIEXPORT jbyteArray JNICALL Java_io_ohlc_Database_00024Native_create(JNIEnv* en
         return NULL;
     }
     ohlc_table_definition definition = {.name = name_text,
-                                        .period_unit = days ? OHLC_DAY : OHLC_MINUTE,
+                                        .period_unit = (ohlc_period_unit)unit,
                                         .period_count = (uint32_t)period,
                                         .timezone = zone_text,
                                         .description = description_text};
@@ -484,12 +482,12 @@ JNIEXPORT void JNICALL Java_io_ohlc_Database_00024Native_closeCursor(JNIEnv* env
     ohlc_cursor_close(cursor(handle));
 }
 
-JNIEXPORT jlong JNICALL Java_io_ohlc_Database_00024Native_parse(JNIEnv* env, jclass type,
-                                                                jboolean days, jbyteArray zone,
-                                                                jbyteArray time) {
+JNIEXPORT jlong JNICALL Java_io_ohlc_Database_00024Native_parsePeriod(JNIEnv* env, jclass type,
+                                                                      jint unit, jbyteArray zone,
+                                                                      jbyteArray time) {
     (void)type;
     ohlc_table_info info = {0};
-    info.period_unit = days ? OHLC_DAY : OHLC_MINUTE;
+    info.period_unit = (ohlc_period_unit)unit;
     char input[4096];
     if (!copy_text(env, zone, info.timezone, sizeof(info.timezone)) ||
         !copy_text(env, time, input, sizeof(input))) {
@@ -500,15 +498,15 @@ JNIEXPORT jlong JNICALL Java_io_ohlc_Database_00024Native_parse(JNIEnv* env, jcl
     return (jlong)key;
 }
 
-JNIEXPORT jstring JNICALL Java_io_ohlc_Database_00024Native_format(JNIEnv* env, jclass type,
-                                                                   jboolean days, jlong key) {
+JNIEXPORT jstring JNICALL Java_io_ohlc_Database_00024Native_formatPeriod(JNIEnv* env, jclass type,
+                                                                         jint unit, jlong key) {
     (void)type;
     if (!uint32_valid(key)) {
         check(env, OHLC_INVALID);
         return NULL;
     }
     ohlc_table_info info = {0};
-    info.period_unit = days ? OHLC_DAY : OHLC_MINUTE;
+    info.period_unit = (ohlc_period_unit)unit;
     char output[64];
     if (!check(env, ohlc_time_format(&info, (uint32_t)key, output, sizeof(output)))) {
         return NULL;

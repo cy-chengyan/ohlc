@@ -345,6 +345,7 @@ unsigned int ohlc_popcount(uint16_t value);
 void* ohlc_alloc(ohlc_allocator* allocator, size_t size);
 void ohlc_free(ohlc_allocator* allocator, void* pointer);
 ohlc_status ohlc_definition_validate(const ohlc_table_definition* definition);
+bool ohlc_period_is_date(ohlc_period_unit unit);
 ohlc_status ohlc_timezone_validate(const char* name);
 size_t ohlc_definition_encode(uint8_t* output, const ohlc_table_info* info);
 ohlc_status ohlc_definition_decode(const uint8_t* data, size_t size, ohlc_table_info* info);

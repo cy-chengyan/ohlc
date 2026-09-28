@@ -49,7 +49,32 @@ public final class Ohlc implements AutoCloseable {
     private static final ScheduledThreadPoolExecutor DEADLINES = deadlines();
     private static final Pattern TIME = Pattern.compile(
         "^(?:([0-9]{4,8})-([0-9]{2})-([0-9]{2})|([0-9]{4})([0-9]{2})([0-9]{2}))"
-        + "(?:[ T]([0-9]{2}):([0-9]{2}):00(Z|[+-][0-9]{2}:[0-9]{2})?)?$");
+        + "(?:[ T]([0-9]{2}):([0-9]{2}):([0-9]{2})(Z|[+-][0-9]{2}:[0-9]{2})?)?$");
+
+    /** Bar metadata. Date-based units preserve the full caller-supplied date label. */
+    public enum PeriodUnit {
+        MINUTE(1, "m", false), DAY(2, "d", true), SECOND(3, "s", false),
+        MONTH(4, "mo", true), YEAR(5, "y", true);
+
+        public final int code;
+        public final String suffix;
+        public final boolean dateBased;
+
+        PeriodUnit(int code, String suffix, boolean dateBased) {
+            this.code = code;
+            this.suffix = suffix;
+            this.dateBased = dateBased;
+        }
+
+        static PeriodUnit fromCode(long code) {
+            for (PeriodUnit unit : values()) {
+                if (unit.code == code) {
+                    return unit;
+                }
+            }
+            return null;
+        }
+    }
 
     private final Closeable transport;
     private final DataInputStream input;
@@ -434,8 +459,18 @@ public final class Ohlc implements AutoCloseable {
         return response.getLong();
     }
 
+    /** Convenience overload retaining the original minute/day API. */
     public synchronized Table create(String name, long periodCount, boolean days,
                                       String timezone, String description) throws IOException {
+        return create(name, periodCount, days ? PeriodUnit.DAY : PeriodUnit.MINUTE,
+                      timezone, description);
+    }
+
+    public synchronized Table create(String name, long periodCount, PeriodUnit unit,
+                                      String timezone, String description) throws IOException {
+        if (unit == null) {
+            throw new IllegalArgumentException("Period unit is required");
+        }
         byte[] encodedName = text(name);
         byte[] encodedZone = text(timezone);
         byte[] encodedDescription = text(description);
@@ -444,14 +479,14 @@ public final class Ohlc implements AutoCloseable {
             throw new IllegalArgumentException("Table definition exceeds limits");
         }
         ByteBuffer body = buffer(20 + encodedName.length + encodedZone.length + encodedDescription.length);
-        body.put(string(encodedName)).putInt(days ? 2 : 1).putInt(uint32(periodCount))
+        body.put(string(encodedName)).putInt(unit.code).putInt(uint32(periodCount))
             .put(string(encodedZone)).put(string(encodedDescription)).flip();
         ByteBuffer response = call(9, body);
         if (response.remaining() != 12) {
             abort();
             throw new Failure(9, "Malformed table creation acknowledgement");
         }
-        return new Table(u32(response), response.getLong(), name, days, periodCount, timezone, description);
+        return new Table(u32(response), response.getLong(), name, unit, periodCount, timezone, description);
     }
 
     /** Fetch a bounded table page. Continue at last.id + 1; never wrap uint32. */
@@ -534,14 +569,14 @@ public final class Ohlc implements AutoCloseable {
         if (body.remaining() < 8) {
             throw corrupt("Truncated period definition");
         }
-        long unit = u32(body);
+        PeriodUnit unit = PeriodUnit.fromCode(u32(body));
         long count = u32(body);
         String zone = utf8(readString(body, 255));
         String description = utf8(readString(body, 4096));
-        if (id == 0 || sequence == 0 || (unit != 1 && unit != 2) || count == 0) {
+        if (id == 0 || sequence == 0 || unit == null || count == 0) {
             throw corrupt("Invalid table definition");
         }
-        return new Table(id, sequence, name, unit == 2, count, zone, description);
+        return new Table(id, sequence, name, unit, count, zone, description);
     }
 
     private byte[] readString(ByteBuffer body, int maximum) throws IOException {
@@ -569,17 +604,20 @@ public final class Ohlc implements AutoCloseable {
         public final long id;
         public final long createdSequence;
         public final String name;
+        /** Whether time keys count calendar days; use periodUnit for the bar period. */
         public final boolean days;
+        public final PeriodUnit periodUnit;
         public final long periodCount;
         public final String timezone;
         public final String description;
 
-        private Table(long id, long sequence, String name, boolean days, long period,
+        private Table(long id, long sequence, String name, PeriodUnit unit, long period,
                       String timezone, String description) {
             this.id = id;
             this.createdSequence = sequence;
             this.name = name;
-            this.days = days;
+            this.days = unit.dateBased;
+            this.periodUnit = unit;
             this.periodCount = period;
             this.timezone = timezone;
             this.description = description;
@@ -591,7 +629,8 @@ public final class Ohlc implements AutoCloseable {
             }
             Matcher match = TIME.matcher(text);
             if (!match.matches() || days != (match.group(7) == null)) {
-                throw new IllegalArgumentException("Invalid date or minute; seconds must be 00");
+                throw new IllegalArgumentException(
+                    "Expected a date label or a full timestamp for the table period");
             }
             int base = match.group(1) != null ? 1 : 4;
             LocalDate date = LocalDate.of(Integer.parseInt(match.group(base)),
@@ -602,9 +641,13 @@ public final class Ohlc implements AutoCloseable {
             if (days) {
                 return Integer.toUnsignedLong(uint32(date.toEpochDay()));
             }
+            int second = Integer.parseInt(match.group(9));
+            if (periodUnit == PeriodUnit.MINUTE && second != 0) {
+                throw new IllegalArgumentException("Minute timestamps require zero seconds");
+            }
             LocalDateTime local = date.atTime(Integer.parseInt(match.group(7)),
-                                               Integer.parseInt(match.group(8)));
-            String suffix = match.group(9);
+                                               Integer.parseInt(match.group(8)), second);
+            String suffix = match.group(10);
             long epoch;
             if (suffix != null) {
                 int offset = 0;
@@ -624,10 +667,11 @@ public final class Ohlc implements AutoCloseable {
                 }
                 epoch = local.toEpochSecond(offsets.get(0));
             }
-            if (epoch < 0 || epoch % 60 != 0) {
-                throw new IllegalArgumentException("Minute is outside the time-key domain");
+            int step = periodUnit == PeriodUnit.SECOND ? 1 : 60;
+            if (epoch < 0 || epoch % step != 0) {
+                throw new IllegalArgumentException("Timestamp is outside the time-key domain");
             }
-            return Integer.toUnsignedLong(uint32(epoch / 60));
+            return Integer.toUnsignedLong(uint32(epoch / step));
         }
 
         public String formatTime(long key) {
@@ -637,9 +681,12 @@ public final class Ohlc implements AutoCloseable {
                 return String.format(Locale.ROOT, "%04d-%02d-%02d", date.getYear(),
                                      date.getMonthValue(), date.getDayOfMonth());
             }
-            LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(key * 60), ZoneOffset.UTC);
-            return String.format(Locale.ROOT, "%04d-%02d-%02dT%02d:%02d:00Z", time.getYear(),
-                                 time.getMonthValue(), time.getDayOfMonth(), time.getHour(), time.getMinute());
+            int step = periodUnit == PeriodUnit.SECOND ? 1 : 60;
+            LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(key * step),
+                                                       ZoneOffset.UTC);
+            return String.format(Locale.ROOT, "%04d-%02d-%02dT%02d:%02d:%02dZ", time.getYear(),
+                                 time.getMonthValue(), time.getDayOfMonth(), time.getHour(),
+                                 time.getMinute(), time.getSecond());
         }
 
         public long resolve(String ticker) throws IOException {

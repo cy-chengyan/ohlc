@@ -225,10 +225,38 @@ def table_deletion(path, library):
         assert results(db.table("replace").cross("20260901")) == [(code, *((2,) * 7))]
 
 
+def extended_periods(path, library):
+    definitions = (("seconds", "5s", "Asia/Shanghai", "20260901 09:30:17", 1788226217),
+                   ("months", "3mo", "", "20260917", 20713),
+                   ("years", "2y", "", "20260917", 20713))
+    with Database(path, create=True, library=library) as db:
+        for name, period, zone, stamp, key in definitions:
+            table = db.create(name, period=period, timezone=zone)
+            assert table.time_key(stamp) == key
+            table.insert("AAPL", key + 1, EXTREMES)
+            table.insert("AAPL", stamp, EXTREMES)
+        require_error(1, lambda: db.create("no_zone", period="1s"))
+        require_error(2, lambda: db.create("bad_zone", period="1s", timezone="Not/AZone"))
+        require_error(1, lambda: db.create("year_zone", period="1y", timezone="UTC"))
+    # First reopen from WAL, then reopen from a checkpoint with the same metadata and keys.
+    for checkpoint in (True, False):
+        with Database(path, library=library) as db:
+            assert [table.period for table in db.tables()] == [item[1] for item in definitions]
+            for name, period, zone, stamp, key in definitions:
+                table = db.table(name)
+                assert table.period == period and table.timezone == zone
+                assert table.time_key(table.format_time(0xffffffff)) == 0xffffffff
+                assert [row[0] for row in results(table.series("AAPL", key, key + 2))] == [key, key + 1]
+                assert results(table.cross(stamp)) == [(0, *EXTREMES)]
+            if checkpoint:
+                db.checkpoint()
+
+
 def main():
     library = os.path.abspath(sys.argv[1])
     with tempfile.TemporaryDirectory(prefix="ohlc-embed-", dir=os.environ.get("TMPDIR", "/tmp")) as temp:
         path = Path(temp) / "db"
+        extended_periods(Path(temp) / "periods", library)
         table_deletion(Path(temp) / "drop", library)
         uuid = python_contract(path, library)
         if len(sys.argv) > 2:

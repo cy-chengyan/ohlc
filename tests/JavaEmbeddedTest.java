@@ -70,6 +70,40 @@ public final class JavaEmbeddedTest {
         }
     }
 
+    private static void extendedPeriods(Database db) throws Exception {
+        Ohlc.PeriodUnit[] units = {Ohlc.PeriodUnit.SECOND, Ohlc.PeriodUnit.MONTH,
+                                   Ohlc.PeriodUnit.YEAR};
+        for (Ohlc.PeriodUnit unit : units) {
+            boolean seconds = unit == Ohlc.PeriodUnit.SECOND;
+            Database.Table table = db.create("java_period", 5, unit,
+                                              seconds ? "Asia/Shanghai" : "", "");
+            assert db.table("java_period").periodUnit == unit;
+            String stamp = seconds ? "20260901 09:30:17" : "20260917";
+            long key = seconds ? 1788226217L : 20713L;
+            assert table.timeKey(stamp) == key;
+            assert table.timeKey(table.formatTime(0xffffffffL)) == 0xffffffffL;
+            assert table.formatTime(key).equals(seconds ? "2026-09-01T01:30:17Z" : "2026-09-17");
+            if (seconds) {
+                assert table.timeKey("2026-09-01T01:30:17Z") == key;
+                assert table.timeKey("2106-02-07T06:28:15Z") == 0xffffffffL;
+                try {
+                    table.timeKey("2106-02-07T06:28:16Z");
+                    throw new AssertionError("Second key overflow accepted");
+                } catch (IllegalArgumentException | Ohlc.Failure expected) {
+                    // All APIs must reject the first second beyond uint32.
+                }
+            } else {
+                assert table.timeKey("20260918") == key + 1;
+            }
+            table.insert("AAPL", stamp, 1, 2, 0, 1, 3, 4, 1000000);
+            try (Database.Query query = table.series("AAPL", stamp, "@" + (key + 1))) {
+                assert query.next().count() == 1;
+                assert query.next() == null;
+            }
+            db.drop("java_period");
+        }
+    }
+
     public static void main(String[] arguments) throws Exception {
         Path path = Path.of(arguments[0]);
         Database.Query outstanding;
@@ -85,6 +119,7 @@ public final class JavaEmbeddedTest {
             Database.Table minute = db.table("bars_3m");
             assert minute.description.equals("UTF-8 \ud83d\udcc8");
             assert db.tables(1, 128).size() == 2;
+            extendedPeriods(db);
             Database.Table removed = db.create("java_drop", 1, true, "", "");
             db.drop("java_drop");
             Database.Table replacement = db.create("java_drop", 1, true, "", "");

@@ -843,3 +843,65 @@ clang-format 21.1.8、Python 语法与 diff 空白检查通过，没有重跑数
 [结果元数据](../build/acceptance/rpm-shell-20260928/validation.json)。
 EL8 验证使用 UBI 用户空间并共享 RHEL 9 内核，不代表独立 EL8 内核验收。
 本次没有性能复测、ARM64 或真实断电测试；软件包仍为未签名的本地 beta RPM。
+
+## 秒线、月线与年线验收（2026-09-28）
+
+在 macOS 开发机实现并验证 `Ns`、`Nmo`、`Ny`，沿用 uint32 时间键和现有表级映射。
+严格警告下的 C、Java 和 JNI 构建通过；定向运行 core（2.87 秒）、embedded（2.73 秒）、
+network（3.96 秒），最终均通过。后两项同时覆盖 Python 与 Java 客户端。
+clang-format 21.1.8、Python 语法及 diff 空白检查通过，没有重跑无关测试。
+
+| 验证范围 | 结果 |
+|---|---|
+| 建表与元数据 | 秒、月、年周期在 C、shell、Python、Java 正确解析和回读；分钟/日级既有测试继续通过 |
+| 时间精度 | 秒线保留非零秒；月/年线保留任意完整日期，同月不同日期不合并；周期计数不触发取整 |
+| uint32 边界 | 秒线起点和最大值可往返；接受显式偏移下的同一时刻，拒绝越界、纪元前 UTC 时刻、小数秒和闰秒 |
+| 时区与日期 | 秒线要求有效时区，月/年线拒绝时区；夏令时缺口和歧义明确拒绝，显式偏移可消除歧义；闰日验证通过 |
+| 写入与查询 | 新周期支持插入、历史补录、实际时间排序、横截面及证券集合筛选；shell 闭区间包含两个端点及最大时间键 |
+| 持久性路径 | Python 嵌入式测试在 WAL 重开和检查点后再次重开，元数据、时间键和行情均保持一致 |
+| 帮助与文档 | 实际执行 `help create; help series; help cross;`，输出包含新增周期、日期规则和时间键单位 |
+
+首次运行中 core 已通过；另两项新增测试的预期分别修正为既有契约：不存在的时区返回
+`NOT_FOUND`，网络查询允许独立的空 FINAL 帧。修正测试后复跑 embedded/network 通过。
+保留[首次测试输出](../build/acceptance/periods-20260928/initial-core-embedded-network.log)、
+[复跑输出](../build/acceptance/periods-20260928/embedded-network.log)、
+[帮助输出](../build/acceptance/periods-20260928/help.txt)和
+[结果元数据](../build/acceptance/periods-20260928/validation.json)。
+
+本次未构建 RPM、未更新测试服务器，未作 Linux、性能或真实断电验收。
+
+## 周期扩展 RPM 升级验收（2026-09-28）
+
+使用基于 `dcf62c9b29c059e3bbd4464d8e620c4c6554b527` 的当前工作区快照，包含未提交的
+秒/月/年周期扩展及 RPM Release 6；保留基准提交、完整差异和逐文件来源校验清单。
+源码归档 SHA-256 为 `66276cc1426af93d14ed1c465f27fa7c99ca26b2040364a3a0e942eb145616ea`。
+磁盘格式 5、网络协议 4、C ABI 2 不变；服务端、客户端及 Java JAR/JNI 配套升级。
+
+| 验证范围 | 结果 |
+|---|---|
+| EL8 / EL9 构建 | 两套 `0.1.0~beta.1-6` RPM 成功；各自 11/11 项检查通过，分别耗时 9.45 / 9.41 秒 |
+| 产物完整性 | 每套包含 8 个功能包、7 个调试包及 1 个 SRPM；RPM 摘要与 SHA-256 清单通过，安装前再次核对 |
+| 备份与升级 | 停止服务后备份原数据库，保留配置归档；RHEL 9.4 x86-64 实机的 8 个功能包由 Release 5 升至 Release 6 |
+| 既有数据 | 升级前后数据库 UUID、提交序号、全部表元数据、证券编号和行摘要一致；配置与 systemd 数据目录 override 的 SHA-256 不变 |
+| 新周期查询 | 秒/月/年建表、完整日期保留、先写后补历史时间、实际时间排序、闭区间端点及横截面证券筛选通过 |
+| 时间边界 | 秒线最大 uint32 键可写可读，越界、小数秒与闰秒被拒绝；夏令时重复和不存在的本地时间被拒绝，显式偏移区分重复时刻 |
+| 已安装客户端 | 使用系统安装的 Python/shell 操作测试服务；Java 网络端读取三种新周期，JNI 建表、写入和检查点重开通过 |
+| 服务重启 | 新旧表一起完成检查点并重启服务，元数据与全部行摘要一致；结束后删除本次创建的 4 张临时表 |
+| 最终服务 | active/running 且 enabled，继续使用 `/ssd01/ohlc` 和 TCP `192.168.7.188:8765`；开发机局域网 PING / STATS / TABLES 读取成功 |
+
+最终仍只有原有 `a_stock_1d` 表、1 个证券和 1 条行情，内容与升级前一致。
+测试产生的新增和删除使提交序号由 15 增至 37；未迁移、重导入或修改既有行情。
+数据库与配置备份保存在 `/home/ohlc/rpm-env/deployments/20260928T032558Z-periods-release6/`。
+安装后的 Java 嵌入式检查使用该部署记录目录内的独立数据库，不使用服务数据目录。
+
+两套 RPM 产物位于 `/home/ohlc/rpm-env/artifacts/el8/` 和 `el9/` 下的
+`20260928T032558Z-snapshot-66276cc1426a/`，对应 `latest` 链接均已更新。
+重建相同快照使用 `/home/ohlc/rpm-env/bin/build-periods-66276cc1426a all`；
+普通 `build-rpm` 入口仍引用较早的独立源码 checkout。
+
+本地证据：[构建日志](../build/acceptance/rpm-periods-20260928/build-el8-el9.log)、
+[安装日志](../build/acceptance/rpm-periods-20260928/install.log)、
+[局域网检查](../build/acceptance/rpm-periods-20260928/lan-check.txt)、
+[结果元数据](../build/acceptance/rpm-periods-20260928/validation.json)。
+EL8 为 UBI 用户空间并共享 RHEL 9 内核，不代表独立 EL8 内核验证；
+本次未作性能复测、ARM64 或真实断电测试，产物仍为未签名的本地 beta RPM。

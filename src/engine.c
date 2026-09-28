@@ -268,7 +268,7 @@ ohlc_status ohlc_table_create(ohlc_db* db, const ohlc_table_definition* definiti
     if (status != OHLC_OK) {
         return status;
     }
-    if (definition->period_unit == OHLC_MINUTE) {
+    if (!ohlc_period_is_date(definition->period_unit)) {
         status = ohlc_timezone_validate(definition->timezone);
         if (status != OHLC_OK) {
             return status;

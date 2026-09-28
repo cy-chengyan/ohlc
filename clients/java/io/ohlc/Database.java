@@ -52,8 +52,9 @@ public final class Database implements AutoCloseable {
         private static native byte[][] tables(long database, long start, int limit)
             throws Ohlc.Failure;
         private static native long drop(long database, long id) throws Ohlc.Failure;
-        private static native byte[] create(long database, byte[] name, long period, boolean days,
-                                           byte[] timezone, byte[] description) throws Ohlc.Failure;
+        private static native byte[] createPeriod(long database, byte[] name, long period, int unit,
+                                                  byte[] timezone, byte[] description)
+            throws Ohlc.Failure;
         private static native long[] ticker(long database, long table, byte[] ticker, boolean register)
             throws Ohlc.Failure;
         private static native byte[] tickerAt(long database, long table, long code) throws Ohlc.Failure;
@@ -68,9 +69,9 @@ public final class Database implements AutoCloseable {
         private static native int next(long cursor, ByteBuffer target, int offset, int rows)
             throws Ohlc.Failure;
         private static native void closeCursor(long cursor);
-        private static native long parse(boolean days, byte[] timezone, byte[] time)
+        private static native long parsePeriod(int unit, byte[] timezone, byte[] time)
             throws Ohlc.Failure;
-        private static native String format(boolean days, long key) throws Ohlc.Failure;
+        private static native String formatPeriod(int unit, long key) throws Ohlc.Failure;
     }
 
     /** Byte and millisecond budgets; defaults are obtained from the native core.
@@ -242,13 +243,23 @@ public final class Database implements AutoCloseable {
         }
     }
 
+    /** Convenience overload retaining the original minute/day API. */
     public Table create(String name, long periodCount, boolean days, String timezone,
                         String description) throws IOException {
+        return create(name, periodCount, days ? Ohlc.PeriodUnit.DAY : Ohlc.PeriodUnit.MINUTE,
+                      timezone, description);
+    }
+
+    public Table create(String name, long periodCount, Ohlc.PeriodUnit unit, String timezone,
+                        String description) throws IOException {
+        if (unit == null) {
+            throw new IllegalArgumentException("Period unit is required");
+        }
         Ohlc.uint32(periodCount);
         state.lifecycle.readLock().lock();
         try {
-            return decodeTable(Native.create(state.requireOpen(), text(name), periodCount, days,
-                                              text(timezone), text(description)));
+            return decodeTable(Native.createPeriod(state.requireOpen(), text(name), periodCount,
+                                                   unit.code, text(timezone), text(description)));
         } finally {
             Reference.reachabilityFence(Database.this);
             state.lifecycle.readLock().unlock();
@@ -346,26 +357,32 @@ public final class Database implements AutoCloseable {
         ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         long id = Ohlc.u32(buffer);
         long sequence = buffer.getLong();
-        boolean days = buffer.getInt() == 2;
+        Ohlc.PeriodUnit unit = Ohlc.PeriodUnit.fromCode(Ohlc.u32(buffer));
+        if (unit == null) {
+            throw new IllegalArgumentException("Unsupported period unit in native metadata");
+        }
         long period = Ohlc.u32(buffer);
-        return new Table(id, sequence, days, period,
+        return new Table(id, sequence, unit, period,
                          string(buffer), string(buffer), string(buffer));
     }
 
     public final class Table {
         public final long id;
         public final long createdSequence;
+        /** Whether time keys count calendar days; use periodUnit for the bar period. */
         public final boolean days;
+        public final Ohlc.PeriodUnit periodUnit;
         public final long periodCount;
         public final String name;
         public final String timezone;
         public final String description;
 
-        private Table(long id, long sequence, boolean days, long period, String name,
+        private Table(long id, long sequence, Ohlc.PeriodUnit unit, long period, String name,
                       String timezone, String description) {
             this.id = id;
             this.createdSequence = sequence;
-            this.days = days;
+            this.days = unit.dateBased;
+            this.periodUnit = unit;
             this.periodCount = period;
             this.name = name;
             this.timezone = timezone;
@@ -373,12 +390,12 @@ public final class Database implements AutoCloseable {
         }
 
         public long timeKey(String value) throws IOException {
-            return Native.parse(days, text(timezone), text(value));
+            return Native.parsePeriod(periodUnit.code, text(timezone), text(value));
         }
 
         public String formatTime(long key) throws IOException {
             Ohlc.uint32(key);
-            return Native.format(days, key);
+            return Native.formatPeriod(periodUnit.code, key);
         }
 
         public long resolve(String ticker) throws IOException {

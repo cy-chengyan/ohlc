@@ -179,6 +179,72 @@ static void test_datetime(void) {
     CHECK(utc == UINT32_MAX);
 }
 
+static void test_extended_periods(void) {
+    ohlc_period_unit unit = OHLC_DAY;
+    uint32_t count = 7;
+    OK(ohlc_period_parse("5s", &unit, &count));
+    CHECK(unit == OHLC_SECOND && count == 5);
+    OK(ohlc_period_parse("3mo", &unit, &count));
+    CHECK(unit == OHLC_MONTH && count == 3);
+    OK(ohlc_period_parse("4294967295y", &unit, &count));
+    CHECK(unit == OHLC_YEAR && count == UINT32_MAX);
+    const char* invalid[] = {"0s", "-1s", "1M", "1h", "1 mo", "4294967296y", "1mojunk"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+        CHECK(ohlc_period_parse(invalid[i], &unit, &count) == OHLC_INVALID);
+        CHECK(unit == OHLC_YEAR && count == UINT32_MAX);
+    }
+
+    ohlc_table_info table = {.period_unit = OHLC_SECOND, .period_count = 5};
+    strcpy(table.timezone, "Asia/Shanghai");
+    uint32_t key = 0;
+    uint32_t other = 0;
+    char formatted[64];
+    OK(ohlc_time_parse(&table, "20260901 09:30:17", &key));
+    CHECK(key == 1788226217u);
+    OK(ohlc_time_format_local(&table, key, formatted, sizeof(formatted)));
+    CHECK(strcmp(formatted, "2026-09-01T09:30:17+08:00") == 0);
+    OK(ohlc_time_parse(&table, formatted, &other));
+    CHECK(other == key);
+    OK(ohlc_time_parse(&table, "1970-01-01T00:00:00Z", &key));
+    CHECK(key == 0);
+    OK(ohlc_time_parse(&table, "2106-02-07T14:28:15+08:00", &key));
+    CHECK(key == UINT32_MAX);
+    OK(ohlc_time_format(&table, key, formatted, sizeof(formatted)));
+    CHECK(strcmp(formatted, "2106-02-07T06:28:15Z") == 0);
+    const char* invalid_times[] = {"2106-02-07T06:28:16Z", "1969-12-31T23:59:59Z",
+                                   "20260901 09:30:60", "20260901 09:30:00.1", "20260901"};
+    for (size_t i = 0; i < sizeof(invalid_times) / sizeof(invalid_times[0]); i++) {
+        CHECK(ohlc_time_parse(&table, invalid_times[i], &key) == OHLC_INVALID);
+    }
+    strcpy(table.timezone, "America/New_York");
+    CHECK(ohlc_time_parse(&table, "2026-03-08 02:30:17", &key) == OHLC_INVALID);
+    CHECK(ohlc_time_parse(&table, "2026-11-01 01:30:17", &key) == OHLC_INVALID);
+    OK(ohlc_time_parse(&table, "2026-11-01T01:30:17-04:00", &key));
+    OK(ohlc_time_parse(&table, "2026-11-01T01:30:17-05:00", &other));
+    CHECK(other - key == 3600);
+    OK(ohlc_time_format_local(&table, 0, formatted, sizeof(formatted)));
+    OK(ohlc_time_parse(&table, formatted, &key));
+    CHECK(key == 0);
+
+    const ohlc_period_unit dates[] = {OHLC_MONTH, OHLC_YEAR};
+    table.timezone[0] = '\0';
+    for (size_t i = 0; i < sizeof(dates) / sizeof(dates[0]); i++) {
+        table.period_unit = dates[i];
+        OK(ohlc_time_parse(&table, "20260917", &key));
+        CHECK(key == 20713);
+        OK(ohlc_time_parse(&table, "20260918", &other));
+        CHECK(other == key + 1);
+        OK(ohlc_time_format(&table, key, formatted, sizeof(formatted)));
+        CHECK(strcmp(formatted, "2026-09-17") == 0);
+        OK(ohlc_time_parse(&table, "20240229", &key));
+        CHECK(ohlc_time_parse(&table, "20260229", &key) == OHLC_INVALID);
+        CHECK(ohlc_time_parse(&table, "20260917 00:00:00", &key) == OHLC_INVALID);
+        OK(ohlc_time_format(&table, UINT32_MAX, formatted, sizeof(formatted)));
+        OK(ohlc_time_parse(&table, formatted, &key));
+        CHECK(key == UINT32_MAX);
+    }
+}
+
 static void check_series(ohlc_db* db, uint32_t table, uint32_t stock, uint32_t first, uint32_t end,
                          bool backfill) {
     ohlc_cursor* cursor = NULL;
@@ -948,6 +1014,7 @@ int main(void) {
     test_format();
     test_time_tree();
     test_datetime();
+    test_extended_periods();
     test_database();
     test_wal_retention();
     test_ordered_batches();

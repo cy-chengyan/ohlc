@@ -514,7 +514,7 @@ cleanup:
 ohlc_status ohlc_time_parse(const ohlc_table_info* table, const char* input, uint32_t* time_key) {
     if (table == NULL || input == NULL || time_key == NULL || strnlen(input, 128) == 128 ||
         strnlen(table->timezone, sizeof(table->timezone)) == sizeof(table->timezone) ||
-        (table->period_unit != OHLC_MINUTE && table->period_unit != OHLC_DAY)) {
+        ohlc_period_suffix(table->period_unit) == NULL) {
         return OHLC_INVALID;
     }
     const char* p = input;
@@ -550,7 +550,7 @@ ohlc_status ohlc_time_parse(const ohlc_table_info* table, const char* input, uin
         return OHLC_INVALID;
     }
     int64_t days = civil_days(year, month, day);
-    if (table->period_unit == OHLC_DAY) {
+    if (ohlc_period_is_date(table->period_unit)) {
         if (*p != '\0' || days < 0 || days > UINT32_MAX) {
             return OHLC_INVALID;
         }
@@ -562,10 +562,11 @@ ohlc_status ohlc_time_parse(const ohlc_table_info* table, const char* input, uin
     int second = 0;
     if ((!consume(&p, ' ') && !consume(&p, 'T')) || !parse_digits(&p, 2, 2, &hour) ||
         !consume(&p, ':') || !parse_digits(&p, 2, 2, &minute) || !consume(&p, ':') ||
-        !parse_digits(&p, 2, 2, &second) || hour > 23 || minute > 59 || second != 0) {
+        !parse_digits(&p, 2, 2, &second) || hour > 23 || minute > 59 || second > 59 ||
+        (table->period_unit == OHLC_MINUTE && second != 0)) {
         return OHLC_INVALID;
     }
-    int64_t utc = days * 86400 + hour * 3600 + minute * 60;
+    int64_t utc = days * 86400 + hour * 3600 + minute * 60 + second;
     ohlc_status status = OHLC_OK;
     if (consume(&p, 'Z')) {
         if (*p != '\0') {
@@ -589,32 +590,36 @@ ohlc_status ohlc_time_parse(const ohlc_table_info* table, const char* input, uin
     if (status != OHLC_OK) {
         return status;
     }
-    if (utc < 0 || utc % 60 != 0 || utc / 60 > UINT32_MAX) {
+    int64_t step = table->period_unit == OHLC_SECOND ? 1 : 60;
+    if (utc < 0 || utc % step != 0 || utc / step > UINT32_MAX) {
         return OHLC_INVALID;
     }
-    *time_key = (uint32_t)(utc / 60);
+    *time_key = (uint32_t)(utc / step);
     return OHLC_OK;
 }
 
 ohlc_status ohlc_time_format(const ohlc_table_info* table, uint32_t time_key, char* output,
                              size_t capacity) {
     if (table == NULL || output == NULL || capacity == 0 ||
-        (table->period_unit != OHLC_MINUTE && table->period_unit != OHLC_DAY)) {
+        ohlc_period_suffix(table->period_unit) == NULL) {
         return OHLC_INVALID;
     }
     int64_t year = 0;
     int month = 0;
     int day = 0;
-    int64_t days = table->period_unit == OHLC_DAY ? time_key : time_key / 1440u;
+    int64_t step = table->period_unit == OHLC_SECOND ? 1 : 60;
+    int64_t seconds = (int64_t)time_key * step;
+    int64_t days = ohlc_period_is_date(table->period_unit) ? time_key : seconds / 86400;
     civil_date(days, &year, &month, &day);
     int length;
-    if (table->period_unit == OHLC_DAY) {
+    if (ohlc_period_is_date(table->period_unit)) {
         length = snprintf(output, capacity, "%04lld-%02d-%02d", (long long)year, month, day);
     } else {
-        unsigned int hour = (time_key % 1440u) / 60u;
-        unsigned int minute = time_key % 60u;
-        length = snprintf(output, capacity, "%04lld-%02d-%02dT%02u:%02u:00Z", (long long)year,
-                          month, day, hour, minute);
+        unsigned int hour = (unsigned int)(seconds % 86400 / 3600);
+        unsigned int minute = (unsigned int)(seconds % 3600 / 60);
+        unsigned int second = (unsigned int)(seconds % 60);
+        length = snprintf(output, capacity, "%04lld-%02d-%02dT%02u:%02u:%02uZ", (long long)year,
+                          month, day, hour, minute, second);
     }
     return length < 0 || (size_t)length >= capacity ? OHLC_LIMIT : OHLC_OK;
 }
@@ -625,19 +630,20 @@ ohlc_status ohlc_time_format_local(const ohlc_table_info* table, uint32_t time_k
         strnlen(table->timezone, sizeof(table->timezone)) == sizeof(table->timezone)) {
         return OHLC_INVALID;
     }
-    if (table->period_unit == OHLC_DAY || strcmp(table->timezone, "UTC") == 0 ||
+    if (ohlc_period_is_date(table->period_unit) || strcmp(table->timezone, "UTC") == 0 ||
         strcmp(table->timezone, "Etc/UTC") == 0) {
         return ohlc_time_format(table, time_key, output, capacity);
     }
-    if (table->period_unit != OHLC_MINUTE) {
+    if (table->period_unit != OHLC_MINUTE && table->period_unit != OHLC_SECOND) {
         return OHLC_INVALID;
     }
+    int64_t step = table->period_unit == OHLC_SECOND ? 1 : 60;
     pthread_mutex_lock(&zone_mutex);
     const ohlc_zone* zone = NULL;
     ohlc_status status = zone_cached_locked(table->timezone, &zone);
     int32_t offset = 0;
     if (status == OHLC_OK) {
-        status = zone_offset(zone, (int64_t)time_key * 60, &offset);
+        status = zone_offset(zone, (int64_t)time_key * step, &offset);
     }
     pthread_mutex_unlock(&zone_mutex);
     if (status != OHLC_OK) {
@@ -645,10 +651,10 @@ ohlc_status ohlc_time_format_local(const ohlc_table_info* table, uint32_t time_k
     }
     if (offset % 60 != 0) {
         /* Historical second-based offsets cannot round-trip through the
-         * minute input grammar; preserve an exact UTC representation. */
+         * explicit-offset grammar; preserve an exact UTC representation. */
         return ohlc_time_format(table, time_key, output, capacity);
     }
-    int64_t seconds = (int64_t)time_key * 60 + offset;
+    int64_t seconds = (int64_t)time_key * step + offset;
     int64_t days = seconds / 86400;
     int64_t remainder = seconds % 86400;
     if (remainder < 0) {
@@ -660,10 +666,10 @@ ohlc_status ohlc_time_format_local(const ohlc_table_info* table, uint32_t time_k
     int day;
     civil_date(days, &year, &month, &day);
     int64_t absolute_offset = offset < 0 ? -(int64_t)offset : offset;
-    int length =
-        snprintf(output, capacity, "%04lld-%02d-%02dT%02lld:%02lld:00%c%02lld:%02lld",
-                 (long long)year, month, day, (long long)(remainder / 3600),
-                 (long long)(remainder % 3600 / 60), offset < 0 ? '-' : '+',
-                 (long long)(absolute_offset / 3600), (long long)(absolute_offset % 3600 / 60));
+    int length = snprintf(output, capacity, "%04lld-%02d-%02dT%02lld:%02lld:%02lld%c%02lld:%02lld",
+                          (long long)year, month, day, (long long)(remainder / 3600),
+                          (long long)(remainder % 3600 / 60), (long long)(remainder % 60),
+                          offset < 0 ? '-' : '+', (long long)(absolute_offset / 3600),
+                          (long long)(absolute_offset % 3600 / 60));
     return length < 0 || (size_t)length >= capacity ? OHLC_LIMIT : OHLC_OK;
 }

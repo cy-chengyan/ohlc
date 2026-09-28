@@ -92,6 +92,40 @@ def check_shell_queries(execute, options):
         client.drop("shell_dates")
 
 
+def check_extended_periods(execute, options):
+    definitions = (("seconds", "5s", ' --timezone Asia/Shanghai', "20260901 09:30:17", 1788226217),
+                   ("months", "3mo", "", "20260917", 20713),
+                   ("years", "2y", "", "20260917", 20713))
+    with Connection(**options) as client:
+        for name, period, zone, stamp, key in definitions:
+            execute(f"create {name} --period {period}{zone};")
+            execute(f'insert {name} AAPL "{stamp}" 1 2 0 1 3 4 1000000;')
+            table = client.table(name)
+            assert table.period == period and table.time_key(stamp) == key
+            table.insert("AAPL", key + 1, (1, 2, 0, 1, 3, 4, 1000000))
+            query = f'series {name} AAPL from "{stamp}" and @{key + 1} --all --format jsonl;'
+            assert [json.loads(line)["key"] for line in execute(query).stdout.splitlines()] == [key, key + 1]
+            result = execute(f'cross {name} "{stamp}" and ticker in (AAPL, UNKNOWN) --format jsonl;')
+            assert [json.loads(line)["key"] for line in result.stdout.splitlines()] == [0]
+            assert f"\t{name}\t{period}\t" in execute(f"describe {name};").stdout
+        execute('insert seconds MAX "2106-02-07T06:28:15Z" 1 2 0 1 3 4 1000000;')
+        result = execute('series seconds MAX from @4294967295 and @4294967295 --format jsonl;')
+        assert json.loads(result.stdout)["key"] == 0xffffffff
+        for stamp in ("2106-02-07T06:28:16Z", "1969-12-31T23:59:59Z",
+                      "20260901 09:30:60", "20260901 09:30:00.1"):
+            execute(f'cross seconds "{stamp}";', 1)
+        for period in ("0s", "1M", "1h", "4294967296y"):
+            execute(f"create invalid --period {period};", 1)
+        execute("create no_zone --period 1s;", 1)
+        for period in ("1s", "2mo", "3y"):
+            table = client.create("python_period", period=period,
+                                  timezone="UTC" if period.endswith("s") else "")
+            assert table.period == period
+            client.drop("python_period")
+        for name, *_ in definitions:
+            client.drop(name)
+
+
 def check_cross_filter_frames(socket_path, token):
     """Reject malformed counted name lists without losing frame alignment."""
     def receive_exact(peer, size):
@@ -199,6 +233,7 @@ def main():
                 assert result.returncode == expected, (result.returncode, result.stdout, result.stderr)
                 return result
             check_shell_queries(execute, options)
+            check_extended_periods(execute, options)
             check_cross_filter_frames(socket_path, b"test-writer")
             help_result = subprocess.run([shell, "--help"], capture_output=True, text=True, check=True)
             assert "help examples" in help_result.stdout

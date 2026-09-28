@@ -23,7 +23,7 @@ rejected as unsupported; use a new database directory. No migration is provided.
 
 ## What it provides
 
-- User-created tables for periods such as `1m`, `3m`, `1d`, and `5d`, all with the same schema.
+- User-created tables for periods such as `5s`, `3m`, `1d`, `1mo`, and `1y`, all with the same schema.
 - **Integer-only market values in both APIs and storage**, exact ticker identifiers, and date or
   date-time input.
 - Atomic batches within one table, WAL synchronization before successful write acknowledgment,
@@ -39,7 +39,7 @@ scaling, and adjustment factors.
 
 ## Data model
 
-The logical key is **`(table, ticker, timestamp)`**, or a calendar-date label for daily tables.
+The logical key is **`(table, ticker, timestamp)`**, using a calendar-date label for day/month/year tables.
 Every row has these seven fields, in this order:
 
 | Fields | Type |
@@ -60,8 +60,9 @@ is available for low-level writes using persistent codes. IDs remain stable; sto
 placeholder rows. A stored zero is a valid value, not a missing-data marker.
 
 Range queries use **`[start, end)`** and return records in actual time order, including after historical
-backfill. Minute tables require a time zone and whole-minute timestamps; an explicit UTC offset
-overrides the table's zone. Daily tables use calendar-date labels. A period such as `3m` or `5d`
+backfill. Second/minute tables require a time zone; minute timestamps must align to whole minutes.
+An explicit UTC offset overrides the table's zone. Day/month/year tables use full calendar-date
+labels. A period such as `5s`, `3m`, `5d`, `1mo`, or `1y`
 describes caller-supplied bars: ohlc does not round timestamps, fill gaps, or calculate aggregates.
 
 ## Why integer values
@@ -153,6 +154,29 @@ The interactive editor supports Ctrl+K/U/W to cut text, Ctrl+Y to paste it back,
 for incremental reverse history search. Type a search term, press Ctrl+R for an older match,
 Enter to submit, Esc to edit the match, or Ctrl+G to restore your original input.
 Use `help keys;` for movement, history and other keyboard shortcuts.
+
+Table periods accept a positive count followed by `s`, `m`, `d`, `mo` or `y`:
+
+| Suffix | Bar period | uint32 time key |
+|---|---|---|
+| `s` | Seconds | Unix seconds |
+| `m` | Minutes | Unix minutes |
+| `d` | Days | Days since 1970-01-01 |
+| `mo` | Months | Days since 1970-01-01; full date label preserved |
+| `y` | Years | Days since 1970-01-01; full date label preserved |
+
+```text
+create bars_5s --period 5s --timezone Asia/Shanghai;
+create bars_1mo --period 1mo;
+create bars_1y --period 1y;
+```
+
+Second/minute tables require a time zone; date-based tables have none. Second keys cover
+1970-01-01T00:00:00Z through 2106-02-07T06:28:15Z, inclusive. Seconds must be `00` for minute
+tables; fractional and leap seconds are rejected. Periods never round or aggregate input:
+`5s` accepts `09:30:17`, and month/year bars can use any valid date within the time-key range.
+Update the server and clients together to use the new units; update Java JAR/JNI together.
+The existing row layout and minute/day keys are unchanged.
 
 Shell `series ... from START and END` includes both endpoints; the old `to` syntax is removed.
 `cross ... and ticker in (...)` filters on the server, ignores unknown tickers and missing bars,

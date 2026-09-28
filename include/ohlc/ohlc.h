@@ -34,7 +34,19 @@ typedef enum {
     OHLC_ALREADY_EXISTS = 11
 } ohlc_status;
 
-typedef enum { OHLC_MINUTE = 1, OHLC_DAY = 2 } ohlc_period_unit;
+typedef enum {
+    OHLC_MINUTE = 1,
+    OHLC_DAY = 2,
+    OHLC_SECOND = 3,
+    OHLC_MONTH = 4,
+    OHLC_YEAR = 5
+} ohlc_period_unit;
+
+/* Parse a positive uint32 count followed by s, m, d, mo or y. Outputs are
+ * caller-owned and unchanged on INVALID. No allocation; thread-safe. */
+ohlc_status ohlc_period_parse(const char* text, ohlc_period_unit* unit, uint32_t* count);
+/* Borrow an immutable suffix, or NULL for an unknown unit. Thread-safe. */
+const char* ohlc_period_suffix(ohlc_period_unit unit);
 
 /* This native value is not the disk or wire layout. Always use the row codec. */
 typedef struct {
@@ -186,16 +198,19 @@ void ohlc_cursor_close(ohlc_cursor* cursor);
  * serialize with other checkpoints and do not change the commit sequence. */
 ohlc_status ohlc_checkpoint(ohlc_db* db);
 
-/* Dates use YYYY-MM-DD or YYYYMMDD. Minute strings accept either date form
- * plus HH:MM:SS, and an optional Z or +/-HH:MM offset. Seconds must be zero.
- * An explicit offset overrides the table timezone. No bar rounding occurs. */
+/* Day/month/year labels use YYYY-MM-DD or YYYYMMDD without date rounding.
+ * Second/minute strings add HH:MM:SS and an optional Z or +/-HH:MM offset,
+ * overriding the table timezone. Minute inputs require zero seconds.
+ * Keys use uint32 Unix seconds for SECOND, Unix minutes for MINUTE, and
+ * epoch days for DAY/MONTH/YEAR.
+ * Fractional seconds and leap seconds are rejected. No bar rounding occurs. */
 ohlc_status ohlc_time_parse(const ohlc_table_info* table, const char* input, uint32_t* time_key);
-/* Minute keys are formatted as unambiguous UTC ISO timestamps; day keys as
- * calendar dates. The caller owns the output buffer. */
+/* Second/minute keys format as unambiguous UTC ISO timestamps; day/month/year
+ * keys as full calendar dates. The caller owns the output buffer. */
 ohlc_status ohlc_time_format(const ohlc_table_info* table, uint32_t time_key, char* output,
                              size_t capacity);
 /* Human-facing time in the table timezone, including an explicit UTC offset.
- * Day tables retain their calendar-date label. Machine output should also
+ * Day/month/year tables retain their calendar-date label. Machine output should also
  * retain the original integer time key. */
 ohlc_status ohlc_time_format_local(const ohlc_table_info* table, uint32_t time_key, char* output,
                                    size_t capacity);

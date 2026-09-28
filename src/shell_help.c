@@ -55,12 +55,16 @@ const shell_help ohlc_shell_commands[] = {
     {.name = "create",
      .group = SHELL_HELP_TABLES,
      .summary = "Create a table and define its bar period.",
-     .syntax = "create TABLE --period Nm|Nd [--timezone ZONE] [--description TEXT];",
+     .syntax = "create TABLE --period Ns|Nm|Nd|Nmo|Ny [--timezone ZONE] [--description TEXT];",
      .description =
-         "Create a durable fixed-schema table; write access required. Minute tables require a "
-         "timezone.",
+         "Create a durable fixed-schema table; write access required. Second/minute tables "
+         "require a timezone; day/month/year tables use date labels without a timezone. "
+         "Period metadata never rounds timestamps or generates bars.",
      .example = "create bars_3m --period 3m --timezone Asia/Shanghai;\n"
-                "create bars_1d --period 1d;"},
+                "create bars_1d --period 1d;\n"
+                "create bars_5s --period 5s --timezone Asia/Shanghai;\n"
+                "create bars_1mo --period 1mo;\n"
+                "create bars_1y --period 1y;"},
     {.name = "tables",
      .group = SHELL_HELP_TABLES,
      .summary = "List tables.",
@@ -110,7 +114,14 @@ const shell_help ohlc_shell_commands[] = {
                 "series bars_3m AAPL from \"20260901 09:30:00\" and \"20260901 16:00:00\" --all;\n"
                 "\n"
                 "# Daily bars (1d), including both dates\n"
-                "series bars_1d AAPL from \"20260901\" and \"20260930\" --all;"},
+                "series bars_1d AAPL from \"20260901\" and \"20260930\" --all;\n"
+                "\n"
+                "# Second bars (5s); endpoints remain exact seconds\n"
+                "series bars_5s AAPL from \"20260901 09:30:17\" and \"20260901 09:30:22\";\n"
+                "\n"
+                "# Month/year bars preserve caller-supplied date labels\n"
+                "series bars_1mo AAPL from \"20260101\" and \"20261231\";\n"
+                "series bars_1y AAPL from \"20200101\" and \"20261231\";"},
     {.name = "cross",
      .group = SHELL_HELP_QUERIES,
      .summary = "Query one time, optionally for a security set.",
@@ -382,13 +393,21 @@ static void help_query_options(size_t width) {
 
 static void help_times(size_t width) {
     puts("\nTime values");
-    help_pair("Minute bars",
+    help_pair("Second/minute",
               "Quoted date/time, interpreted in the table's time zone unless "
               "an explicit offset is supplied.",
-              12, width);
-    help_pair("Daily bars", "A date such as \"20260901\" or \"2026-09-01\".", 12, width);
-    help_pair("Debug keys", "@KEY is a normalized minute/day key, not an internal time code.", 12,
-              width);
+              16, width);
+    help_pair("Day/month/year",
+              "A full date such as \"20260917\". Month/year dates are not rounded "
+              "or restricted to period boundaries.",
+              16, width);
+    help_pair("Debug keys",
+              "@KEY is uint32: Unix seconds for s, Unix minutes for m, and days "
+              "since 1970-01-01 for d/mo/y. It is not an internal time code.",
+              16, width);
+    help_text("Second keys cover 1970-01-01T00:00:00Z to 2106-02-07T06:28:15Z. "
+              "Minute inputs require zero seconds. No fractional or leap seconds.",
+              width, false);
     help_text("No rounding or aggregation. Names support quotes, backslash and \\xHH escapes.",
               width, false);
 }
@@ -417,6 +436,14 @@ static void help_detail(const shell_help* entry, size_t width) {
     bool cross = strcmp(entry->name, "cross") == 0;
     bool inserting = strcmp(entry->name, "insert") == 0 || strcmp(entry->name, "put") == 0;
     bool importing = strcmp(entry->name, "import") == 0;
+    if (strcmp(entry->name, "create") == 0) {
+        puts("\nPeriods (N is a positive uint32 integer)");
+        help_pair("Ns", "Second bars; time keys count Unix seconds.", 12, width);
+        help_pair("Nm", "Minute bars; time keys count Unix minutes.", 12, width);
+        help_pair("Nd", "Day bars; time keys count days since 1970-01-01.", 12, width);
+        help_pair("Nmo", "Month bars; time keys retain the full date, in epoch days.", 12, width);
+        help_pair("Ny", "Year bars; time keys retain the full date, in epoch days.", 12, width);
+    }
     if (series || cross) {
         puts("\nArguments");
         help_pair("TABLE", "An existing table.", 12, width);

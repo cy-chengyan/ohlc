@@ -244,8 +244,8 @@ static ohlc_status parse_time(const ohlc_table_info* table, const shell_word* wo
 }
 
 static void print_definition(const ohlc_table_info* table) {
-    printf("%" PRIu32 "\t%s\t%" PRIu32 "%c\t", table->id, table->name, table->period_count,
-           table->period_unit == OHLC_MINUTE ? 'm' : 'd');
+    printf("%" PRIu32 "\t%s\t%" PRIu32 "%s\t", table->id, table->name, table->period_count,
+           ohlc_period_suffix(table->period_unit));
     ohlc_shell_print_bytes(stdout, table->timezone, strlen(table->timezone));
     fputc('\t', stdout);
     ohlc_shell_print_bytes(stdout, table->description, strlen(table->description));
@@ -332,16 +332,11 @@ static ohlc_status create_table(shell* state, const shell_command* command) {
             return OHLC_INVALID;
         }
         shell_word value = command->words[i + 1];
-        if (word_is(&command->words[i], "--period") && value.size >= 2) {
-            char unit = value.text[value.size - 1];
-            value.size--;
-            uint64_t count;
-            if ((unit != 'm' && unit != 'd') || !ohlc_shell_uint(&value, UINT32_MAX, &count) ||
-                count == 0) {
+        if (word_is(&command->words[i], "--period")) {
+            if (ohlc_period_parse(value.text, &definition.period_unit, &definition.period_count) !=
+                OHLC_OK) {
                 return OHLC_INVALID;
             }
-            definition.period_unit = unit == 'm' ? OHLC_MINUTE : OHLC_DAY;
-            definition.period_count = (uint32_t)count;
         } else if (word_is(&command->words[i], "--timezone")) {
             definition.timezone = value.text;
         } else if (word_is(&command->words[i], "--description")) {
@@ -495,7 +490,7 @@ static ohlc_status query(shell* state, const shell_command* command, bool series
                 return OHLC_INVALID;
             }
             /* The engine uses an exclusive bound in normalized minutes/days,
-             * not the table's declared bar period. Widen before adding one. */
+             * (second, minute or day), not the bar period. Widen before adding one. */
             end = (uint64_t)last + 1;
         }
         if (status == OHLC_OK) {

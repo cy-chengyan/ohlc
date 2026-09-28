@@ -7,6 +7,44 @@ import java.nio.charset.StandardCharsets;
 public final class JavaClientTest {
     private JavaClientTest() {}
 
+    private static void extendedPeriods(Ohlc client) throws Exception {
+        Ohlc.PeriodUnit[] units = {Ohlc.PeriodUnit.SECOND, Ohlc.PeriodUnit.MONTH,
+                                   Ohlc.PeriodUnit.YEAR};
+        for (Ohlc.PeriodUnit unit : units) {
+            boolean seconds = unit == Ohlc.PeriodUnit.SECOND;
+            Ohlc.Table table = client.create("java_period", 5, unit,
+                                              seconds ? "Asia/Shanghai" : "", "");
+            assert client.table("java_period").periodUnit == unit;
+            String stamp = seconds ? "20260901 09:30:17" : "20260917";
+            long key = seconds ? 1788226217L : 20713L;
+            assert table.timeKey(stamp) == key;
+            assert table.timeKey(table.formatTime(0xffffffffL)) == 0xffffffffL;
+            assert table.formatTime(key).equals(seconds ? "2026-09-01T01:30:17Z" : "2026-09-17");
+            if (seconds) {
+                assert table.timeKey("2026-09-01T01:30:17Z") == key;
+                assert table.timeKey("2106-02-07T06:28:15Z") == 0xffffffffL;
+                try {
+                    table.timeKey("2106-02-07T06:28:16Z");
+                    throw new AssertionError("Second key overflow accepted");
+                } catch (IllegalArgumentException expected) {
+                    // All APIs must reject the first second beyond uint32.
+                }
+            } else {
+                assert table.timeKey("20260918") == key + 1;
+            }
+            table.insert("AAPL", stamp, 1, 2, 0, 1, 3, 4, 1000000);
+            try (Ohlc.Query query = table.series("AAPL", stamp, "@" + (key + 1))) {
+                int rows = 0;
+                Ohlc.Chunk chunk;
+                while ((chunk = query.next()) != null) {
+                    rows += chunk.count();
+                }
+                assert rows == 1;
+            }
+            client.drop("java_period");
+        }
+    }
+
     public static void main(String[] arguments) throws Exception {
         byte[] token = "test-writer".getBytes(StandardCharsets.US_ASCII);
         try (Ohlc client = Ohlc.unix(Path.of(arguments[0]), token, 30000)) {
@@ -22,6 +60,7 @@ public final class JavaClientTest {
             Ohlc.Table day = client.table("bars_5d");
             assert day.timeKey(day.formatTime(0xffffffffL)) == 0xffffffffL;
             assert client.tables(1, 128).size() == 2;
+            extendedPeriods(client);
             Ohlc.Table removed = client.create("java_drop", 1, true, "", "");
             client.drop("java_drop");
             Ohlc.Table replacement = client.create("java_drop", 1, true, "", "");

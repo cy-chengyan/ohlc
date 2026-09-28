@@ -6,7 +6,7 @@
 
 Name:           ohlc
 Version:        0.1.0~beta.1
-Release:        5%{?dist}
+Release:        6%{?dist}
 Summary:        Fixed-row OHLC storage engine and service
 License:        Apache-2.0
 URL:            https://github.com/cy-chengyan/ohlc
@@ -193,6 +193,10 @@ getent passwd ohlc >/dev/null || \
 %{_libdir}/libohlc_jni.so
 
 %changelog
+* Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-6
+- Add second, month and year periods with uint32 time keys.
+- Update shell help and C, Python, Java and JNI interfaces for the new periods.
+
 * Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-5
 - Add inclusive shell series ranges and server-side cross ticker filters.
 - Improve help layout and examples, keyboard editing, and history search.

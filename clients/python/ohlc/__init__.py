@@ -25,6 +25,26 @@ class OutcomeUnknown(Error):
     """A mutation may have committed. Inspect its result; never blindly retry."""
 
 
+_PERIOD_UNITS = {"m": 1, "d": 2, "s": 3, "mo": 4, "y": 5}
+_PERIOD_SUFFIXES = {unit: suffix for suffix, unit in _PERIOD_UNITS.items()}
+
+
+def _period(value):
+    if not isinstance(value, str):
+        raise ValueError("Period must be a positive integer followed by s, m, d, mo or y")
+    for suffix, unit in _PERIOD_UNITS.items():
+        if not value.endswith(suffix):
+            continue
+        digits = value[:-len(suffix)]
+        if not digits or not digits.isascii() or not digits.isdecimal():
+            break
+        count = _uint(int(digits))
+        if count == 0:
+            break
+        return unit, count
+    raise ValueError("Period must be a positive integer followed by s, m, d, mo or y")
+
+
 class _Bytes(C.Structure):
     _fields_ = [("data", C.c_void_p), ("size", C.c_size_t)]
 
@@ -225,12 +245,8 @@ class Connection:
             return Table(self, info)
 
     def create(self, name, *, period="1m", timezone="", description=""):
-        if not isinstance(period, str) or len(period) < 2 or period[-1] not in "md":
-            raise ValueError("Period must be a positive integer followed by m or d")
-        if not period[:-1].isascii() or not period[:-1].isdecimal():
-            raise ValueError("Invalid period")
-        definition = _Definition(_text(name), 1 if period[-1] == "m" else 2,
-                                 _uint(int(period[:-1])), _text(timezone), _text(description))
+        unit, count = _period(period)
+        definition = _Definition(_text(name), unit, count, _text(timezone), _text(description))
         with self._lock:
             self._require_open()
             info = _Table()
@@ -374,7 +390,9 @@ class Table:
         self.name = info.name.decode("utf-8")
         self.timezone = info.timezone.decode("ascii")
         self.description = info.description.decode("utf-8")
-        self.period = f"{info.period}{'m' if info.unit == 1 else 'd'}"
+        if info.unit not in _PERIOD_SUFFIXES:
+            raise Error(7, "Unsupported period unit")
+        self.period = f"{info.period}{_PERIOD_SUFFIXES[info.unit]}"
         self.created_seq = info.created_seq
 
     def resolve(self, ticker):

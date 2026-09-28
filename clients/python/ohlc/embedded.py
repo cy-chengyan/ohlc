@@ -10,7 +10,7 @@ import threading
 from typing import Optional
 
 from . import Chunk, Error, OutcomeUnknown, Table, _Bytes, _Definition, _Table, _text, _ticker, _uint
-from . import _check_abi
+from . import _check_abi, _period
 
 
 class _CoreOptions(C.Structure):
@@ -220,11 +220,8 @@ class Database:
         return EmbeddedTable(self, info)
 
     def create(self, name, *, period="1m", timezone="", description=""):
-        if (not isinstance(period, str) or len(period) < 2 or period[-1] not in "md" or
-                not period[:-1].isascii() or not period[:-1].isdecimal()):
-            raise ValueError("Period must be a positive integer followed by m or d")
-        definition = _Definition(_text(name), 1 if period[-1] == "m" else 2,
-                                 _uint(int(period[:-1])), _text(timezone), _text(description))
+        unit, count = _period(period)
+        definition = _Definition(_text(name), unit, count, _text(timezone), _text(description))
         info = _Table()
         with self._lease() as handle:
             self._check(self._lib.ohlc_table_create(handle, C.byref(definition), C.byref(info)))
