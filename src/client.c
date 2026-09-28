@@ -533,6 +533,42 @@ ohlc_status ohlc_client_cross(ohlc_client* client, uint32_t table_id, uint32_t t
     return query_start(client, 6, body, sizeof(body));
 }
 
+ohlc_status ohlc_client_cross_tickers(ohlc_client* client, uint32_t table_id, uint32_t time_key,
+                                      const ohlc_bytes* tickers, size_t count) {
+    if (client == NULL || (count != 0 && tickers == NULL)) {
+        return OHLC_INVALID;
+    }
+    if (count > OHLC_MAX_QUERY_TICKERS) {
+        return OHLC_LIMIT;
+    }
+    size_t size = 12;
+    for (size_t i = 0; i < count; i++) {
+        if (tickers[i].data == NULL || tickers[i].size == 0 || tickers[i].size > 4096) {
+            return OHLC_INVALID;
+        }
+        size += 4 + tickers[i].size;
+        if (size > client->info.max_frame_bytes) {
+            return OHLC_LIMIT;
+        }
+    }
+    uint8_t* body = malloc(size);
+    if (body == NULL) {
+        return OHLC_LIMIT;
+    }
+    ohlc_put_u32(body, table_id);
+    ohlc_put_u32(body + 4, time_key);
+    ohlc_put_u32(body + 8, (uint32_t)count);
+    size_t position = 12;
+    for (size_t i = 0; i < count; i++) {
+        ohlc_put_u32(body + position, (uint32_t)tickers[i].size);
+        memcpy(body + position + 4, tickers[i].data, tickers[i].size);
+        position += 4 + tickers[i].size;
+    }
+    ohlc_status status = query_start(client, 6, body, size);
+    free(body);
+    return status;
+}
+
 ohlc_status ohlc_client_next(ohlc_client* client, ohlc_bytes* rows, uint32_t* count,
                              uint64_t* snapshot_sequence, bool* final) {
     if (client == NULL || rows == NULL || count == NULL || snapshot_sequence == NULL ||

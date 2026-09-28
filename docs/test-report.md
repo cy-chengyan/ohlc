@@ -737,3 +737,74 @@ python3 tools/summarize_retirement.py "$OHLC_LIFECYCLE_ROOT" --output summary.js
 
 EL8 使用 UBI 用户空间并共享 RHEL 9 内核，不代表独立 EL8 内核验收。
 本次没有验证 ARM64、真实断电或设备故障，也没有重新测量性能。RPM 为未签名的本地 beta 包。
+
+## shell 查询修订验收（2026-09-28）
+
+本节记录 shell 闭区间与横截面证券集合筛选的本地验收；不改变磁盘格式 5、协议版本 4 或 C ABI 2。
+环境为 macOS / Apple Silicon。默认严格警告构建通过，仅运行与改动相关的 core、network 回归，
+两项全部通过，合计 4.62 秒。随后将预算失败用例收紧到“游标已分配、选择数组无法分配”的边界，
+单独复跑 core 通过，耗时 2.46 秒。clang-format 21.1.8、Python 测试语法与 diff 空白检查通过。
+
+| 验证范围 | 结果 |
+|---|---|
+| 包含端点 | 分钟表和日表包含结束时间；起止相等返回该时点；最大 uint32 时间键不溢出 |
+| 语法和范围 | 拒绝旧 `to`、反向区间和 shell 中超出 uint32 的终点；按分钟/天加一，不按表周期扩展 |
+| 证券集合 | 服务端筛选；乱序输入按表内编号输出；重复名称去重；未知、其他表独有、缺失行情均忽略 |
+| 解析 | 空集合、100 个重复输入、紧贴的括号/逗号、大小写关键字、带逗号/括号/NUL 的证券名称通过 |
+| 非法输入 | 缺少分隔符、尾随逗号、空名称、未闭合括号、超限或截断的协议名称列表被拒绝 |
+| 快照和生命周期 | 超过一个读取窗口、7 行输出缓冲、查询后新增证券和删表均不改变原查询的结果快照 |
+| 读取范围 | 在关闭缓存并重开数据库后，从 320 个证券中选择位于两个块的证券，断言实际读取为 8,192 B |
+| 资源失败 | 选择数组分配失败返回 LIMIT，游标、读根和分配计账均被释放 |
+| 既有行为 | 不带筛选的横截面及现有 C/Python/Java 半开区间接口保持原语义；network 既有回归通过 |
+
+帮助文本和中英文 README 示例已更新，并实际检查 `help series; help cross;` 输出。
+证据保存在本地构建目录：[core/network 输出](../build/acceptance/shell-query-20260928/core-network.log)、
+[预算边界复测](../build/acceptance/shell-query-20260928/core-allocation-boundary.log)、
+[结果元数据](../build/acceptance/shell-query-20260928/validation.json)。
+
+本次没有重新构建 RPM、更新测试服务器、执行 Linux 验收或性能复测。
+
+## shell 帮助排版验收（2026-09-28）
+
+本次仅调整帮助定义、显示布局和日级示例；查询执行逻辑未改动。
+macOS 严格警告下的 `ohlc_shell` 目标构建通过，clang-format 21.1.8 和 diff 空白检查通过。
+直接执行帮助命令，并以伪终端设置 80、60、40 列检查实际输出，没有重跑数据库全套回归。
+
+- 总览按六组展示，23 个命令各出现一次，仅使用简短摘要。
+- `series`、`cross` 的详细帮助包含日级 `bars_1d` 示例，跨行后日期时间参数保持完整。
+- 在上述三种宽度下，帮助行宽不超出终端；窄终端的标签和说明上下排列。
+- 80 列与窄终端输出中的示例，经去除注释并按引号解析后，词元序列完全一致。
+- `drop`、`import` 的多行说明保持缩进；当前 preview/timing 设置正确显示。
+- 未连接服务器时帮助可用；未知主题继续返回失败并提示 `Use help;`。
+
+原始输出与检查脚本保存在
+[本地证据目录](../build/acceptance/shell-help-20260928/)，包括
+[总览](../build/acceptance/shell-help-20260928/overview-80.txt)、
+[series 帮助](../build/acceptance/shell-help-20260928/series-80.txt)、
+[cross 帮助](../build/acceptance/shell-help-20260928/cross-80.txt)。
+本次未重新打包或更新测试服务器。
+
+## shell 行编辑验收（2026-09-28）
+
+将终端编辑与历史管理分离至 `src/shell_edit.c`，补齐常用 Emacs 风格按键，
+Ctrl+R 改为增量反向搜索，`help keys;` 提供分组说明。
+macOS 严格警告构建通过；定向运行 `shell_edit`（0.22 秒）和 `transport`（9.48 秒），均通过。
+clang-format 21.1.8、Python 语法与 diff 空白检查通过，没有重跑数据库全套回归。
+
+| 验证范围 | 结果 |
+|---|---|
+| 剪切与粘回 | Ctrl+K/U/W/Y、Alt+D/Backspace 正确修改实际提交的命令；连续剪切累积，跨提示符可粘回 |
+| 光标与编辑 | Ctrl+A/E/B/F、Home/End、Delete/Backspace、Ctrl+D/H/T/L、单词移动均通过真实 PTY 按键验证 |
+| 增量搜索 | Ctrl+R 后键入关键词，重复查找更早匹配；失败后 Backspace 恢复；Enter 提交，Esc 后继续编辑 |
+| 草稿与取消 | Ctrl+G 恢复搜索前输入及光标；上下历史和 Ctrl+P/N 恢复未完成草稿；Ctrl+C 取消搜索和多行命令 |
+| 历史与终端 | 历史文件权限为 0600；关闭历史后不记录、不查找，`--no-history` 不修改既有文件；退出恢复终端设置 |
+| 显示边界 | 20/40 列下长行与长关键词无换行溢出；正常终端下命令补全和 `help keys` 可用 |
+| 已连接会话 | transport 既有终端连接、PING、建表与缓存表名补全通过，TCP/TLS 回归通过 |
+
+伪终端测试只操作临时历史文件和本地临时服务。终端恢复检查排除 BSD 内核自动设置的
+瞬时 `PENDIN` 状态位，其余设置与启动前一致。
+证据：[编辑测试输出](../build/acceptance/shell-editor-20260928/shell-edit.log)、
+[transport 输出](../build/acceptance/shell-editor-20260928/transport.log)、
+[快捷键帮助](../build/acceptance/shell-editor-20260928/help-keys.txt)、
+[结果元数据](../build/acceptance/shell-editor-20260928/validation.json)。
+本次未构建新 RPM、未更新测试服务器，亦未作 Linux 或性能验收。

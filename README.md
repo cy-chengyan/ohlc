@@ -137,8 +137,9 @@ help;
 create bars_1m --period 1m --timezone UTC;
 insert bars_1m AAPL "2026-09-01 09:30:00Z" 10000 10100 9950 10080 1200 12100000 1000000;
 insert bars_1m AAPL "2026-09-01 09:31:00Z" 10080 10120 10000 10100 900 9100000 1000000;
-series bars_1m AAPL from "2026-09-01 09:30:00Z" to "2026-09-01 09:32:00Z" --all;
+series bars_1m AAPL from "2026-09-01 09:30:00Z" and "2026-09-01 09:31:00Z" --all;
 cross bars_1m "2026-09-01 09:30:00Z" --all;
+cross bars_1m "2026-09-01 09:30:00Z" and ticker in ('AAPL', 'GOOGL', 'INTL');
 stats;
 help import;
 quit;
@@ -147,6 +148,16 @@ quit;
 `series` returns both bars; `cross` returns the bar at 09:30. `--all` disables the interactive
 preview limit. Use `help examples;` for more commands. Stop the server with Ctrl+C in its terminal;
 `quit;` only closes the shell. Choose another socket path if the example path is already in use.
+
+The interactive editor supports Ctrl+K/U/W to cut text, Ctrl+Y to paste it back, and Ctrl+R
+for incremental reverse history search. Type a search term, press Ctrl+R for an older match,
+Enter to submit, Esc to edit the match, or Ctrl+G to restore your original input.
+Use `help keys;` for movement, history and other keyboard shortcuts.
+
+Shell `series ... from START and END` includes both endpoints; the old `to` syntax is removed.
+`cross ... and ticker in (...)` filters on the server, ignores unknown tickers and missing bars,
+and returns each match once in table-local ticker-code order. Without the clause, all tickers
+are queried. The existing C, Python and Java series APIs keep their half-open ranges.
 
 `drop TABLE;` permanently deletes a table and its rows; see `help drop;`. Existing queries
 finish on their original snapshots before files are reclaimed. Recreating the name assigns

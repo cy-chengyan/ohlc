@@ -283,6 +283,55 @@ static ohlc_status dispatch(server* instance, const ohlc_frame* request, const u
     return OHLC_UNSUPPORTED;
 }
 
+static ohlc_status cross_request(server* instance, const uint8_t* body, size_t size,
+                                 ohlc_cursor** output) {
+    if (size == 8) {
+        return ohlc_cross(instance->db, ohlc_get_u32(body), ohlc_get_u32(body + 4), output);
+    }
+    if (size < 12) {
+        return OHLC_INVALID;
+    }
+    uint32_t count = ohlc_get_u32(body + 8);
+    if (count > OHLC_MAX_QUERY_TICKERS) {
+        return OHLC_LIMIT;
+    }
+    if (count > (size - 12) / 5) {
+        return OHLC_INVALID;
+    }
+    ohlc_bytes* tickers = NULL;
+    if (count != 0) {
+        tickers = ohlc_alloc(&instance->buffers, count * sizeof(*tickers));
+        if (tickers == NULL) {
+            return OHLC_BUSY;
+        }
+    }
+    size_t position = 12;
+    ohlc_status status = OHLC_OK;
+    for (uint32_t i = 0; i < count; i++) {
+        if (size - position < 4) {
+            status = OHLC_INVALID;
+            break;
+        }
+        uint32_t length = ohlc_get_u32(body + position);
+        position += 4;
+        if (length == 0 || length > 4096 || length > size - position) {
+            status = OHLC_INVALID;
+            break;
+        }
+        tickers[i] = (ohlc_bytes){body + position, length};
+        position += length;
+    }
+    if (status == OHLC_OK && position != size) {
+        status = OHLC_INVALID;
+    }
+    if (status == OHLC_OK) {
+        status = ohlc_cross_tickers(instance->db, ohlc_get_u32(body), ohlc_get_u32(body + 4),
+                                    tickers, count, output);
+    }
+    ohlc_free(&instance->buffers, tickers);
+    return status;
+}
+
 static ohlc_status send_query(connection* peer, const ohlc_frame* request, const uint8_t* body,
                               uint8_t* output, uint64_t deadline) {
     ohlc_cursor* cursor = NULL;
@@ -290,8 +339,8 @@ static ohlc_status send_query(connection* peer, const ohlc_frame* request, const
     if (request->opcode == 5 && request->size == 20) {
         status = ohlc_series(peer->owner->db, ohlc_get_u32(body), ohlc_get_u32(body + 4),
                              ohlc_get_u32(body + 8), ohlc_get_u64(body + 12), &cursor);
-    } else if (request->opcode == 6 && request->size == 8) {
-        status = ohlc_cross(peer->owner->db, ohlc_get_u32(body), ohlc_get_u32(body + 4), &cursor);
+    } else if (request->opcode == 6) {
+        status = cross_request(peer->owner, body, request->size, &cursor);
     }
     uint64_t emitted = 0;
     ohlc_frame response = {.opcode = request->opcode, .request = request->request};

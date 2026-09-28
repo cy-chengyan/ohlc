@@ -11,68 +11,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-const shell_help ohlc_shell_commands[] = {
-    {"help", "help [command|examples]", "Display syntax, field types and examples; works offline.",
-     "help series;"},
-    {"connect",
-     "connect [--socket PATH | --host HOST --port PORT] [--tls --ca FILE --token-file FILE]",
-     "Connect and authenticate; credentials are read from a private file.",
-     "connect --socket /run/ohlc.sock;"},
-    {"disconnect", "disconnect", "Close the connection and discard identifier caches.",
-     "disconnect;"},
-    {"status", "status", "Show negotiated limits, UUID, permissions and last command status.",
-     "status;"},
-    {"ping", "ping", "Verify the connection and report round-trip time.", "ping;"},
-    {"stats", "stats", "Show engine sequences, allocation and cumulative I/O counters.", "stats;"},
-    {"checkpoint", "checkpoint", "Persist a committed snapshot; write access required.",
-     "checkpoint;"},
-    {"create", "create TABLE --period Nm|Nd [--timezone ZONE] [--description TEXT]",
-     "Create a durable fixed-schema table; write access required. Minute tables require a "
-     "timezone.",
-     "create bars_3m --period 3m --timezone Asia/Shanghai;\ncreate bars_5d --period 5d;"},
-    {"tables", "tables", "List tables in stable ID order using bounded pages.", "tables;"},
-    {"drop", "drop TABLE",
-     "Permanently delete a table and its rows; write access required.\n"
-     "Existing queries finish on their snapshots before files are reclaimed.\n"
-     "The name may be reused, but the new table receives a different ID.",
-     "drop bars_3m;"},
-    {"describe", "describe TABLE", "Show immutable table metadata and fixed field positions.",
-     "describe bars_3m;"},
-    {"tickers", "tickers TABLE [PREFIX]", "List exact ticker bytes, escaped for safe display.",
-     "tickers bars_3m AA;"},
-    {"resolve", "resolve TABLE TICKER", "Resolve an existing ticker without registering it.",
-     "resolve bars_3m \"AAPL\";"},
-    {"register", "register TABLE TICKER",
-     "Optionally reserve a table-local ticker code; write access required.",
-     "register bars_3m \"AAPL\";"},
-    {"series", "series TABLE TICKER from START to END [options]",
-     "Read [START, END) ordered by real time. END may be @4294967296. Read access required.",
-     "series bars_3m AAPL from \"20260901 09:30:00\" to \"20260901 16:00:00\" --all;"},
-    {"cross", "cross TABLE TIME [options]", "Read one time across tickers, ordered by ticker code.",
-     "cross bars_3m \"20260901 09:30:00\";\ncross bars_3m @29803050 --format csv --output "
-     "cross.csv;"},
-    {"insert", "insert TABLE TICKER TIME OPEN HIGH LOW CLOSE VOLUME AMOUNT ADJUST_FACTOR",
-     "Atomically insert/replace all seven fields. Table must exist; missing tickers are created "
-     "atomically; write access "
-     "required.",
-     "insert bars_3m AAPL \"20260901 09:30:00\" 10000 10100 9950 10080 1200 12100000 1000000;"},
-    {"put", "put TABLE TICKER TIME OPEN HIGH LOW CLOSE VOLUME AMOUNT ADJUST_FACTOR",
-     "Alias of insert.", "help insert;"},
-    {"import", "import TABLE PATH [--format tsv|csv] [--batch-rows N] [--no-header]",
-     "Import nine columns: ticker,time,open,high,low,close,volume,amount,adjust_factor.\n"
-     "Default: TSV, matching header, 20000 rows/batch. Creates missing tickers atomically with "
-     "each batch.\n"
-     "Stops on the first error. Earlier committed batches remain durable.",
-     "import bars_3m bars.tsv --format tsv --batch-rows 20000;"},
-    {"source", "source PATH", "Run a local script; stop that script on its first failure.",
-     "source queries.ohlc;"},
-    {"set", "set format table|tsv|csv|jsonl; set preview N; set timing on|off; set history on|off",
-     "Set local display options. History is private and never stores credentials.",
-     "set preview 100;"},
-    {"quit", "quit", "Exit. An unknown mutation outcome keeps exit status 4.", "quit;"},
-    {"exit", "exit", "Alias of quit.", "exit;"}};
-const size_t ohlc_shell_command_count =
-    sizeof(ohlc_shell_commands) / sizeof(ohlc_shell_commands[0]);
 volatile sig_atomic_t ohlc_shell_interrupted;
 static volatile sig_atomic_t interrupt_socket = -1;
 
@@ -124,9 +62,11 @@ const char* ohlc_shell_complete(const char* prefix, size_t index) {
         }
     }
     static const char* options[] = {
-        "--format",      "--output",     "--overwrite",  "--all",    "--period", "--timezone",
-        "--description", "--batch-rows", "--no-header",  "--socket", "--host",   "--port",
-        "--tls",         "--ca",         "--token-file", "from",     "to"};
+        "--format",   "--output",      "--overwrite",  "--all",       "--period",
+        "--timezone", "--description", "--batch-rows", "--no-header", "--socket",
+        "--host",     "--port",        "--tls",        "--ca",        "--token-file",
+        "from",       "and",           "ticker",       "in",          "keys",
+        "examples"};
     for (size_t i = 0; i < sizeof(options) / sizeof(options[0]); i++) {
         if (strncmp(options[i], prefix, length) == 0 && index-- == 0) {
             return options[i];
@@ -359,7 +299,7 @@ static ohlc_status list_metadata(shell* state, bool tables, uint32_t table_id,
                     length > response.size - position) {
                     return OHLC_CORRUPT;
                 }
-                shell_word ticker = {(char*)bytes + position, length};
+                shell_word ticker = {.text = (char*)bytes + position, .size = length};
                 cache_symbol(state, table_id, &ticker, code);
                 if (prefix == NULL || (prefix->size <= length &&
                                        memcmp(prefix->text, ticker.text, prefix->size) == 0)) {
@@ -461,10 +401,60 @@ static void print_row(FILE* file, output_format format, uint32_t key, const ohlc
     }
 }
 
+static bool cross_filter(const shell_command* command, size_t* options_start, size_t* count) {
+    if (command->count < 8 || !word_is(&command->words[4], "ticker") ||
+        !word_is(&command->words[5], "in") || command->words[6].punctuation != '(') {
+        return false;
+    }
+    size_t position = 7;
+    *count = 0;
+    if (command->words[position].punctuation != ')') {
+        for (;;) {
+            const shell_word* ticker = &command->words[position];
+            if (ticker->punctuation != 0 || ticker->size == 0 || ticker->size > 4096) {
+                return false;
+            }
+            (*count)++;
+            if (++position == command->count) {
+                return false;
+            }
+            if (command->words[position].punctuation == ')') {
+                break;
+            }
+            if (command->words[position].punctuation != ',' || ++position == command->count) {
+                return false;
+            }
+        }
+    }
+    *options_start = position + 1;
+    return true;
+}
+
+static ohlc_status start_filtered_cross(shell* state, uint32_t table_id, uint32_t time_key,
+                                        const shell_command* command, size_t count) {
+    ohlc_bytes* tickers = count == 0 ? NULL : malloc(count * sizeof(*tickers));
+    if (count != 0 && tickers == NULL) {
+        return OHLC_LIMIT;
+    }
+    for (size_t i = 0; i < count; i++) {
+        const shell_word* word = &command->words[7 + 2 * i];
+        tickers[i] = (ohlc_bytes){word->text, word->size};
+    }
+    ohlc_status status =
+        ohlc_client_cross_tickers(state->client, table_id, time_key, tickers, count);
+    free(tickers);
+    return status;
+}
+
 static ohlc_status query(shell* state, const shell_command* command, bool series) {
     size_t options_start = series ? 7 : 3;
     if (command->count < options_start ||
-        (series && (!word_is(&command->words[3], "from") || !word_is(&command->words[5], "to")))) {
+        (series && (!word_is(&command->words[3], "from") || !word_is(&command->words[5], "and")))) {
+        return OHLC_INVALID;
+    }
+    bool filtered = !series && command->count > 3 && word_is(&command->words[3], "and");
+    size_t ticker_count = 0;
+    if (filtered && !cross_filter(command, &options_start, &ticker_count)) {
         return OHLC_INVALID;
     }
     output_format format = state->format;
@@ -498,12 +488,15 @@ static ohlc_status query(shell* state, const shell_command* command, bool series
         status = parse_time(&table, &command->words[series ? 4 : 2], &key);
     }
     if (status == OHLC_OK && series) {
-        if (word_is(&command->words[6], "@4294967296")) {
-            end = UINT64_C(4294967296);
-        } else {
-            uint32_t last;
-            status = parse_time(&table, &command->words[6], &last);
-            end = status == OHLC_OK ? last : 0;
+        uint32_t last;
+        status = parse_time(&table, &command->words[6], &last);
+        if (status == OHLC_OK) {
+            if (key > last) {
+                return OHLC_INVALID;
+            }
+            /* The engine uses an exclusive bound in normalized minutes/days,
+             * not the table's declared bar period. Widen before adding one. */
+            end = (uint64_t)last + 1;
         }
         if (status == OHLC_OK) {
             status = resolve(state, table.id, &command->words[2], &ticker);
@@ -532,8 +525,13 @@ static ohlc_status query(shell* state, const shell_command* command, bool series
             return OHLC_IO;
         }
     }
-    status = series ? ohlc_client_series(state->client, table.id, ticker, key, end)
-                    : ohlc_client_cross(state->client, table.id, key);
+    if (series) {
+        status = ohlc_client_series(state->client, table.id, ticker, key, end);
+    } else if (filtered) {
+        status = start_filtered_cross(state, table.id, key, command, ticker_count);
+    } else {
+        status = ohlc_client_cross(state->client, table.id, key);
+    }
     if (status == OHLC_OK && format != SHELL_JSONL) {
         if (format == SHELL_TABLE) {
             fputs("datetime ", file);
@@ -819,41 +817,6 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
     return status;
 }
 
-static ohlc_status show_help(const shell* state, const shell_command* command) {
-    if (command->count > 2) {
-        return OHLC_INVALID;
-    }
-    bool examples = command->count == 2 && word_is(&command->words[1], "examples");
-    bool matched = command->count == 1 || examples;
-    for (size_t i = 0; i < ohlc_shell_command_count; i++) {
-        const shell_help* entry = &ohlc_shell_commands[i];
-        if (command->count == 1) {
-            printf("%-12s %s\n", entry->name, entry->description);
-        } else if (examples || word_is(&command->words[1], entry->name)) {
-            matched = true;
-            if (!examples) {
-                printf("%s\nUsage: %s;\n\n", entry->description, entry->syntax);
-            }
-            printf("%s\n\n", entry->example);
-        }
-    }
-    if (!matched) {
-        fprintf(stderr, "Unknown help topic. Use help;\n");
-        return OHLC_INVALID;
-    }
-    puts("Fields: open high low close = int32; volume/factor = uint32; amount = uint64.\n"
-         "Time: quoted date/datetime or @key. No rounding or aggregation.\n"
-         "Query options: --format table|tsv|csv|jsonl --output PATH --overwrite --all\n"
-         "Defaults: terminal preview 100 rows; scripts/files read through successful FINAL.\n"
-         "Tokens support quotes, backslash and \\xHH escapes. No system-command escapes.\n"
-         "Uncertain writes are never automatically retried.");
-    static const char* formats[] = {"table", "tsv", "csv", "jsonl"};
-    printf("Current settings: format=%s preview=%" PRIu64 " history=%s timing=%s\n",
-           formats[state->format], state->preview, state->history ? "on" : "off",
-           state->timing ? "on" : "off");
-    return OHLC_OK;
-}
-
 static ohlc_status assign(char** target, const shell_word* word) {
     if (!text_word(word)) {
         return OHLC_INVALID;
@@ -916,7 +879,12 @@ static ohlc_status execute(shell* state, const shell_command* command) {
     }
     const shell_word* word = command->words;
     if (word_is(word, "help")) {
-        return show_help(state, command);
+        static const char* formats[] = {"table", "tsv", "csv", "jsonl"};
+        shell_help_settings settings = {.format = formats[state->format],
+                                        .preview = state->preview,
+                                        .history = state->history,
+                                        .timing = state->timing};
+        return ohlc_shell_show_help(command, &settings);
     }
     if (word_is(word, "quit") || word_is(word, "exit")) {
         state->quitting = command->count == 1;
@@ -1192,7 +1160,7 @@ int main(int argc, char** argv) {
         if (option == -1) {
             break;
         }
-        shell_word value = {optarg, optarg != NULL ? strlen(optarg) : 0};
+        shell_word value = {.text = optarg, .size = optarg != NULL ? strlen(optarg) : 0};
         ohlc_status status = OHLC_OK;
         switch (option) {
         case 's':

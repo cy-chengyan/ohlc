@@ -79,6 +79,10 @@ ohlc_status ohlc_client_checkpoint(ohlc_client* client);
 ohlc_status ohlc_client_series(ohlc_client* client, uint32_t table_id, uint32_t ticker,
                                uint32_t start, uint64_t end_exclusive);
 ohlc_status ohlc_client_cross(ohlc_client* client, uint32_t table_id, uint32_t time_key);
+/* Same selection semantics as ohlc_cross_tickers; borrows names during this call.
+ * Also bounded by the negotiated frame limit. Uses the normal query/next flow. */
+ohlc_status ohlc_client_cross_tickers(ohlc_client* client, uint32_t table_id, uint32_t time_key,
+                                      const ohlc_bytes* tickers, size_t count);
 ohlc_status ohlc_client_next(ohlc_client* client, ohlc_bytes* rows, uint32_t* count,
                              uint64_t* snapshot_sequence, bool* final);
 

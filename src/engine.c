@@ -988,6 +988,64 @@ uint64_t ohlc_cursor_sequence(const ohlc_cursor* cursor) {
     return cursor == NULL ? 0 : cursor->root->seq;
 }
 
+static int compare_ticker_codes(const void* left, const void* right) {
+    uint32_t a = *(const uint32_t*)left;
+    uint32_t b = *(const uint32_t*)right;
+    return (a > b) - (a < b);
+}
+
+ohlc_status ohlc_cross_tickers(ohlc_db* db, uint32_t table_id, uint32_t time_key,
+                               const ohlc_bytes* tickers, size_t count, ohlc_cursor** output) {
+    if (output == NULL) {
+        return OHLC_INVALID;
+    }
+    *output = NULL;
+    if (count != 0 && tickers == NULL) {
+        return OHLC_INVALID;
+    }
+    if (count > OHLC_MAX_QUERY_TICKERS) {
+        return OHLC_LIMIT;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (tickers[i].data == NULL || tickers[i].size == 0 || tickers[i].size > 4096) {
+            return OHLC_INVALID;
+        }
+    }
+    ohlc_cursor* cursor = NULL;
+    ohlc_status status = ohlc_cross(db, table_id, time_key, &cursor);
+    if (status != OHLC_OK) {
+        return status;
+    }
+    cursor->kind = 3;
+    if (count != 0 && !cursor->done) {
+        cursor->selected_codes = ohlc_alloc(&db->allocator, count * sizeof(uint32_t));
+        if (cursor->selected_codes == NULL) {
+            ohlc_cursor_close(cursor);
+            return OHLC_LIMIT;
+        }
+        for (size_t i = 0; i < count; i++) {
+            const ohlc_ticker_entry* entry =
+                ohlc_dictionary_find(cursor->table->dictionary, tickers[i]);
+            if (entry != NULL) {
+                cursor->selected_codes[cursor->selected_count++] = entry->code;
+            }
+        }
+        qsort(cursor->selected_codes, cursor->selected_count, sizeof(uint32_t),
+              compare_ticker_codes);
+        size_t unique = 0;
+        for (size_t i = 0; i < cursor->selected_count; i++) {
+            uint32_t code = cursor->selected_codes[i];
+            if (unique == 0 || cursor->selected_codes[unique - 1] != code) {
+                cursor->selected_codes[unique++] = code;
+            }
+        }
+        cursor->selected_count = unique;
+    }
+    cursor->done = cursor->done || cursor->selected_count == 0;
+    *output = cursor;
+    return OHLC_OK;
+}
+
 static void cursor_release_window(ohlc_cursor* cursor) {
     ohlc_storage_release(cursor->views, cursor->view_count);
     cursor->view_count = 0;
@@ -1127,6 +1185,48 @@ static ohlc_status plan_cross(ohlc_cursor* cursor) {
     return OHLC_OK;
 }
 
+static ohlc_status plan_selected_cross(ohlc_cursor* cursor) {
+    uint32_t band = cursor->cross_code / 128u;
+    uint8_t tile = (uint8_t)((cursor->cross_code % 128u) / 8u);
+    uint32_t column = cursor->cross_code % 8u;
+    size_t scanned = 0;
+    while (cursor->view_count < OHLC_READ_WINDOW &&
+           cursor->selected_position < cursor->selected_count) {
+        size_t first = cursor->selected_position;
+        uint32_t group = cursor->selected_codes[first] / 16u;
+        do {
+            cursor->selected_position++;
+        } while (cursor->selected_position < cursor->selected_count &&
+                 cursor->selected_codes[cursor->selected_position] / 16u == group);
+        const ohlc_group* entry = ohlc_group_find(cursor->table, band, group);
+        if (entry != NULL && (entry->mask & (1u << tile)) != 0) {
+            const uint8_t* presence =
+                ohlc_storage_presence(cursor->db, cursor->table->info.id, entry, tile);
+            if (presence == NULL) {
+                return OHLC_CORRUPT;
+            }
+            size_t index = cursor->view_count;
+            size_t before = cursor->planned;
+            for (size_t i = first; i < cursor->selected_position; i++) {
+                uint32_t code = cursor->selected_codes[i];
+                uint32_t row = code % 16u;
+                if ((presence[row] & (1u << column)) != 0) {
+                    cursor->plan[cursor->planned++] = (ohlc_result_plan){
+                        .key = code, .view = (uint8_t)index, .slot = (uint8_t)(row * 8u + column)};
+                }
+            }
+            if (before != cursor->planned) {
+                cursor_add_view(cursor, entry, band, group, tile, presence);
+            }
+        }
+        if (++scanned % 64u == 0 && ohlc_monotonic_ms() > cursor->deadline_ms) {
+            return OHLC_CANCELLED;
+        }
+    }
+    cursor->done = cursor->selected_position == cursor->selected_count;
+    return OHLC_OK;
+}
+
 ohlc_status ohlc_cursor_next(ohlc_cursor* cursor, void* output, size_t capacity, size_t* count) {
     if (cursor == NULL || output == NULL || count == NULL || capacity == 0 ||
         capacity > SIZE_MAX / OHLC_RESULT_BYTES) {
@@ -1147,7 +1247,13 @@ ohlc_status ohlc_cursor_next(ohlc_cursor* cursor, void* output, size_t capacity,
             if (cursor->done) {
                 break;
             }
-            cursor->error = cursor->kind == 1 ? plan_series(cursor) : plan_cross(cursor);
+            if (cursor->kind == 1) {
+                cursor->error = plan_series(cursor);
+            } else if (cursor->kind == 3) {
+                cursor->error = plan_selected_cross(cursor);
+            } else {
+                cursor->error = plan_cross(cursor);
+            }
             if (cursor->error == OHLC_OK) {
                 cursor->error = ohlc_storage_read(cursor->db, cursor->table->info.id, cursor->views,
                                                   cursor->view_count);
@@ -1178,6 +1284,7 @@ void ohlc_cursor_close(ohlc_cursor* cursor) {
         ohlc_db* db = cursor->db;
         cursor_release_window(cursor);
         ohlc_root_release(db, cursor->root);
+        ohlc_free(&db->allocator, cursor->selected_codes);
         ohlc_free(&db->allocator, cursor);
         atomic_fetch_sub_explicit(&db->cursor_count, 1, memory_order_release);
     }

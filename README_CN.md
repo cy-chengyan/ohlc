@@ -121,8 +121,9 @@ help;
 create bars_1m --period 1m --timezone UTC;
 insert bars_1m AAPL "2026-09-01 09:30:00Z" 10000 10100 9950 10080 1200 12100000 1000000;
 insert bars_1m AAPL "2026-09-01 09:31:00Z" 10080 10120 10000 10100 900 9100000 1000000;
-series bars_1m AAPL from "2026-09-01 09:30:00Z" to "2026-09-01 09:32:00Z" --all;
+series bars_1m AAPL from "2026-09-01 09:30:00Z" and "2026-09-01 09:31:00Z" --all;
 cross bars_1m "2026-09-01 09:30:00Z" --all;
+cross bars_1m "2026-09-01 09:30:00Z" and ticker in ('AAPL', 'GOOGL', 'INTL');
 stats;
 help import;
 quit;
@@ -131,6 +132,15 @@ quit;
 `series` 返回两条行情，`cross` 返回 09:30 的行情。`--all` 用于取消交互模式下的预览条数限制。
 使用 `help examples;` 查看更多命令示例。在服务所在终端按 Ctrl+C 可停止服务；
 `quit;` 只退出命令行客户端。如果示例中的套接字路径已被占用，请改用其他路径。
+
+交互输入支持 Ctrl+K/U/W 剪切、Ctrl+Y 粘回，以及 Ctrl+R 增量反向搜索历史。
+搜索时输入关键词，再按 Ctrl+R 查找更早的匹配；Enter 提交，Esc 接受后继续编辑，
+Ctrl+G 取消搜索并恢复原输入。使用 `help keys;` 查看光标移动、历史导航等快捷键。
+
+shell 的 `series ... from START and END` 包含起止时间，旧 `to` 语法已移除。
+`cross ... and ticker in (...)` 在服务端筛选，忽略未知证券与该时点没有行情的证券，
+去重后按表内证券编号返回；不带筛选条件时仍查询全部证券。
+现有 C、Python、Java 的 series API 继续使用半开区间。
 
 `drop TABLE;` 永久删除表及其全部行情，详情参见 `help drop;`。已有查询读完原快照后才会回收文件；
 同名重建使用新的表 ID。C、Python、Java 的服务端连接和嵌入式接口也支持删表。

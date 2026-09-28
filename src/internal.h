@@ -319,6 +319,9 @@ struct ohlc_cursor {
     uint64_t deadline_ms;
     uint32_t ticker;
     uint32_t cross_code;
+    uint32_t* selected_codes;
+    size_t selected_count;
+    size_t selected_position;
     uint8_t kind;
     bool done;
     ohlc_status error;

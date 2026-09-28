@@ -170,7 +170,7 @@ def terminal_check(shell, socket_path, token, root):
     try:
         until(b"ohlc> ")
         os.write(master, b"hel\t\n")
-        until(b"Uncertain writes are never automatically retried.")
+        until(b"Current settings")
         until(b"ohlc> ")
         os.write(master, b"discard this\x03")
         until(b"ohlc> ")

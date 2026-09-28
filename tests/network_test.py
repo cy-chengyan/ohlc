@@ -2,6 +2,7 @@
 """Exercise the actual server, C client binding, framing and durable mutations."""
 
 import os
+import json
 from pathlib import Path
 import signal
 import socket
@@ -36,6 +37,88 @@ def connect_when_ready(process, **options):
                 raise
         time.sleep(0.02)
     raise TimeoutError("Server did not become ready")
+
+
+def check_shell_queries(execute, options):
+    """Check inclusive shell bounds and server-side ticker-set parsing."""
+    values = (1, 2, 0, 1, 3, 4, 1000000)
+    with Connection(**options) as client:
+        minute = client.create("shell_range", period="3m", timezone="Asia/Shanghai")
+        day = client.create("shell_dates", period="5d")
+        minute.write([("AAPL", f"20260901 {time}", values)
+                      for time in ("09:30:00", "09:31:00", "09:33:00", "09:34:00")])
+        minute.insert("GOOGL", "20260901 09:30:00", values)
+        minute.insert("INTL", "20260901 09:33:00", values)
+        for name in (b",", b")", b"A,B", b"x\0"):
+            minute.insert(name, "20260901 09:30:00", values)
+        day.write([("AAPL", date, values) for date in ("20260901", "20260902", "20260906")])
+        day.insert("ONLY_OTHER_TABLE", "20260901", values)
+        day.insert("MAX", 0xffffffff, values)
+        original = client.stats()
+
+        def keys(command):
+            output = execute(command + " --format jsonl;").stdout
+            return [json.loads(line)["key"] for line in output.splitlines()]
+
+        start = 'series shell_range AAPL from "20260901 09:30:00"'
+        assert keys(start + ' and "20260901 09:33:00" --all') == [
+            minute.time_key(f"20260901 {time}") for time in ("09:30:00", "09:31:00", "09:33:00")]
+        assert keys(start + ' and "20260901 09:30:00"') == [minute.time_key("20260901 09:30:00")]
+        assert keys('series shell_dates AAPL from "20260901" and "20260902"') == [
+            day.time_key("20260901"), day.time_key("20260902")]
+        assert keys("series shell_dates MAX from @4294967295 and @4294967295") == [0xffffffff]
+        execute(start + ' to "20260901 09:33:00";', 1)
+        execute(start + ' and "20260901 09:29:00";', 1)
+        execute("series shell_dates MAX from @4294967295 and @4294967296;", 1)
+
+        prefix = 'cross shell_range "20260901 09:30:00"'
+        wanted = [minute.resolve("AAPL"), minute.resolve("GOOGL")]
+        assert keys(prefix + " and ticker in ('GOOGL','UNKNOWN','AAPL','AAPL','INTL','ONLY_OTHER_TABLE')") == wanted
+        assert keys(prefix + " AnD TiCkEr In(GOOGL,AAPL)") == wanted
+        assert keys(prefix + " and ticker in ()") == []
+        assert keys(prefix + " and ticker in ('UNKNOWN')") == []
+        assert keys(prefix + " and ticker in (" + ",".join(["'AAPL'"] * 100) + ")") == wanted[:1]
+        assert keys(prefix + r" and ticker in (',',')','A,B','x\x00')") == [
+            minute.resolve(name) for name in (b",", b")", b"A,B", b"x\0")]
+        for clause in ("and ticker in ('AAPL',)", "and ticker in ('AAPL' 'GOOGL')",
+                       "and ticker in ('AAPL'", "and ticker in (,AAPL)",
+                       "and ticker in ('')", "and ticker in ('AAPL'))"):
+            execute(prefix + " " + clause + ";", 1)
+        assert len(keys(prefix)) == 6
+        current = client.stats()
+        assert current["ticker_count"] == original["ticker_count"]
+        assert current["commit_seq"] == original["commit_seq"]
+        client.drop("shell_range")
+        client.drop("shell_dates")
+
+
+def check_cross_filter_frames(socket_path, token):
+    """Reject malformed counted name lists without losing frame alignment."""
+    def receive_exact(peer, size):
+        data = b""
+        while len(data) < size:
+            part = peer.recv(size - len(data))
+            assert part
+            data += part
+        return data
+
+    with socket.socket(socket.AF_UNIX) as peer:
+        peer.settimeout(5)
+        peer.connect(socket_path)
+        requests = [(1, struct.pack("<I", len(token)) + token, 0),
+                    (6, struct.pack("<III", 1, 0, 65537), 3),
+                    (6, struct.pack("<IIII", 1, 0, 1, 4097) + b"x", 1),
+                    (6, struct.pack("<III", 1, 0, 0) + b"extra", 1),
+                    (6, struct.pack("<IIII", 1, 0, 1, 0) + b"x", 1),
+                    (6, struct.pack("<III", 1, 0, 1), 1),
+                    (6, struct.pack("<III", 1, 0, 0), 0),
+                    (2, b"", 0)]
+        for request_id, (opcode, body, expected) in enumerate(requests, 1):
+            peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 4, opcode, 0, len(body), request_id, 0, 0) + body)
+            header = struct.unpack("<4sHHIIQII", receive_exact(peer, 32))
+            assert header[2] == opcode and header[3] == 3 and header[5] == request_id
+            assert header[6] == expected, header
+            receive_exact(peer, header[4])
 
 
 def main():
@@ -115,6 +198,8 @@ def main():
                                         capture_output=True, text=True, timeout=30)
                 assert result.returncode == expected, (result.returncode, result.stdout, result.stderr)
                 return result
+            check_shell_queries(execute, options)
+            check_cross_filter_frames(socket_path, b"test-writer")
             help_result = subprocess.run([shell, "--help"], capture_output=True, text=True, check=True)
             assert "help examples" in help_result.stdout
             dropped = execute('help drop; create discard --period 1d; drop discard; '

@@ -17,6 +17,7 @@ extern "C" {
 #define OHLC_WRITE_BYTES 40u
 #define OHLC_RESULT_BYTES 36u
 #define OHLC_MAX_BATCH_ROWS 250000u
+#define OHLC_MAX_QUERY_TICKERS 65536u
 
 typedef enum {
     OHLC_OK = 0,
@@ -165,6 +166,14 @@ ohlc_status ohlc_write(ohlc_db* db, uint32_t table_id, const void* rows, size_t 
 ohlc_status ohlc_series(ohlc_db* db, uint32_t table_id, uint32_t ticker_code, uint32_t start,
                         uint64_t end_exclusive, ohlc_cursor** output);
 ohlc_status ohlc_cross(ohlc_db* db, uint32_t table_id, uint32_t time_key, ohlc_cursor** output);
+/* Select exact ticker bytes in the same snapshot as the rows. Unknown names and
+ * missing rows are omitted; duplicates appear once, ordered by table-local code.
+ * An empty list returns no rows. Names (1..4096 bytes each) are borrowed only for
+ * this call; the cursor owns its selection. At most OHLC_MAX_QUERY_TICKERS names
+ * are accepted. Invalid inputs return INVALID, budget/count limits return LIMIT,
+ * and a missing table returns NOT_FOUND. Snapshot and thread rules above apply. */
+ohlc_status ohlc_cross_tickers(ohlc_db* db, uint32_t table_id, uint32_t time_key,
+                               const ohlc_bytes* tickers, size_t count, ohlc_cursor** output);
 uint64_t ohlc_cursor_sequence(const ohlc_cursor* cursor);
 /* Copies at most capacity result rows (key:u32, row:32) to caller storage.
  * A successful zero count means complete. Results are ordered by time for

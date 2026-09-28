@@ -842,7 +842,108 @@ static void test_table_dictionaries(void) {
     remove_directory(path);
 }
 
+static void test_selected_cross(void) {
+    char path[] = "/tmp/ohlc-selected-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    options.cache_bytes = 0;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"selected", OHLC_DAY, 1, "", ""};
+    ohlc_table_info table;
+    OK(ohlc_table_create(db, &definition, &table));
+    char labels[320][16];
+    ohlc_bytes names[321];
+    uint8_t writes[320 * OHLC_WRITE_BYTES];
+    for (uint32_t i = 0; i < 320; i++) {
+        int length = snprintf(labels[i], sizeof(labels[i]), "S%u", i);
+        CHECK(length > 0 && length < (int)sizeof(labels[i]));
+        names[i] = (ohlc_bytes){labels[i], (size_t)length};
+        ohlc_row value = value_for(i, 7);
+        ohlc_write_encode(writes + i * OHLC_WRITE_BYTES, i, 7, &value);
+    }
+    uint64_t sequence;
+    OK(ohlc_write_named(db, table.id, names, 320, writes, 320, &sequence));
+    uint32_t code;
+    OK(ohlc_register(db, table.id, (ohlc_bytes){"NO_ROW", 6}, &code, &sequence));
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_close(db));
+    OK(ohlc_open(path, &options, &db));
+    ohlc_bytes selection[] = {names[319], names[0], names[319], {"UNKNOWN", 7}, {"NO_ROW", 6}};
+    ohlc_stats before;
+    ohlc_stats after;
+    ohlc_get_stats(db, &before);
+    ohlc_cursor* cursor = NULL;
+    OK(ohlc_cross_tickers(db, table.id, 7, selection, 5, &cursor));
+    uint8_t results[7 * OHLC_RESULT_BYTES];
+    size_t count;
+    for (uint32_t i = 0; i < 2; i++) {
+        OK(ohlc_cursor_next(cursor, results, 1, &count));
+        uint32_t expected = i == 0 ? 0 : 319;
+        CHECK(count == 1 && ohlc_get_u32(results) == expected);
+        check_value(results + 4, expected, 7);
+    }
+    OK(ohlc_cursor_next(cursor, results, 1, &count));
+    CHECK(count == 0);
+    ohlc_cursor_close(cursor);
+    ohlc_get_stats(db, &after);
+    CHECK(after.disk_read_bytes - before.disk_read_bytes == 2 * OHLC_BLOCK_BYTES);
+    CHECK(after.commit_seq == before.commit_seq && after.ticker_count == before.ticker_count);
+
+    OK(ohlc_cross_tickers(db, table.id, 7, NULL, 0, &cursor));
+    OK(ohlc_cursor_next(cursor, results, 1, &count));
+    CHECK(count == 0);
+    ohlc_cursor_close(cursor);
+    OK(ohlc_cross_tickers(db, table.id, 8, selection, 5, &cursor));
+    OK(ohlc_cursor_next(cursor, results, 1, &count));
+    CHECK(count == 0);
+    ohlc_cursor_close(cursor);
+    CHECK(ohlc_cross_tickers(db, table.id, 7, NULL, 1, &cursor) == OHLC_INVALID);
+    CHECK(cursor == NULL);
+    CHECK(ohlc_cross_tickers(db, table.id, 7, names, OHLC_MAX_QUERY_TICKERS + 1, &cursor) ==
+          OHLC_LIMIT);
+    size_t budget = db->allocator.limit;
+    size_t used = atomic_load(&db->allocator.used);
+    OK(ohlc_cross(db, table.id, 7, &cursor));
+    size_t cursor_budget = atomic_load(&db->allocator.used);
+    ohlc_cursor_close(cursor);
+    db->allocator.limit = cursor_budget;
+    CHECK(ohlc_cross_tickers(db, table.id, 7, selection, 5, &cursor) == OHLC_LIMIT);
+    CHECK(cursor == NULL && atomic_load(&db->allocator.used) == used);
+    CHECK(atomic_load(&db->cursor_count) == 0);
+    db->allocator.limit = budget;
+
+    /* More than one read window, small output buffers, and a pinned selection
+     * that survives a concurrent new ticker followed by table deletion. */
+    for (size_t i = 0; i < 160; i++) {
+        ohlc_bytes swapped = names[i];
+        names[i] = names[319 - i];
+        names[319 - i] = swapped;
+    }
+    names[320] = (ohlc_bytes){"LATER", 5};
+    OK(ohlc_cross_tickers(db, table.id, 7, names, 321, &cursor));
+    uint64_t snapshot = ohlc_cursor_sequence(cursor);
+    OK(ohlc_write_named(db, table.id, names + 320, 1, writes, 1, &sequence));
+    CHECK(sequence > snapshot);
+    OK(ohlc_table_drop(db, table.id, &sequence));
+    uint32_t received = 0;
+    do {
+        OK(ohlc_cursor_next(cursor, results, 7, &count));
+        for (size_t i = 0; i < count; i++) {
+            CHECK(ohlc_get_u32(results + i * OHLC_RESULT_BYTES) == received);
+            check_value(results + i * OHLC_RESULT_BYTES + 4, received++, 7);
+        }
+    } while (count != 0);
+    CHECK(received == 320 && ohlc_cursor_sequence(cursor) == snapshot);
+    ohlc_cursor_close(cursor);
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
 int main(void) {
+    test_selected_cross();
     test_table_dictionaries();
     test_format();
     test_time_tree();

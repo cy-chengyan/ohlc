@@ -427,7 +427,7 @@ database/
 文件随追加写入增长，不依赖全卷预分配。第一版没有独立的全局文件描述符预算管理器；
 部署者需结合表与卷数量设置进程上限，达到系统上限时操作返回 I/O 错误。
 
-公共文件头包含文件类型标识、格式版本 4、数据库 UUID、table_id、卷编号、格式参数、创建代次和头部校验。
+公共文件头包含文件类型标识、格式版本 5、数据库 UUID、table_id、卷编号、格式参数、创建代次和头部校验。
 文件 magic 为 `OHLCFIL5`；catalog/索引记录 magic 为 `OIR5`。磁盘格式与网络协议分别编号，网络协议为 4。
 本版本只读取格式 5；不支持的格式返回 `UNSUPPORTED`，不执行原地迁移。
 全库 catalog 与 WAL 的 table_id 为 0；表卷必须匹配所属表。卷编号只在对应的表和文件类型内有效。
@@ -483,6 +483,12 @@ database/
 
 实现按有限数量的证券组形成调度窗口，窗口内并发读取并排序输出；不为全市场结果分配无界等待队列。
 表存在但没有该时间的数据时返回成功的空结果；不存在的表返回 `NOT_FOUND`。
+
+指定证券集合时，先在同一读根的表级字典内将名称解析为编号，忽略未知名称，排序并去重。
+随后仅按所选编号所属的 group 定位块，检查目标槽位的存在位；没有选中行情的块不读取。
+同组的多个所选证券共享一次块读取，继续使用每窗最多 16 块的读取和输出流程。
+选择数组占用最多 `输入名称数 × 4 B` 加分配器开销，计入引擎预算，游标关闭时释放；
+不通过扫描整个横截面、逐证券发起独立快照查询或客户端过滤实现集合选择。
 
 ### 8.2 读取成本
 
@@ -830,7 +836,7 @@ TLS 传输层不改变核心数据库的 C17 数据格式。
 
 ### 14.2 帧头
 
-协议版本为 3，独立于磁盘格式版本 4；所有整数小端。固定帧头 32 B：
+协议版本为 4，独立于磁盘格式版本 5；所有整数小端。固定帧头 32 B：
 
 | 偏移 | 类型 | 含义 |
 |---:|---|---|
@@ -858,7 +864,7 @@ TLS 传输层不改变核心数据库的 C17 数据格式。
 | 3 | RESOLVE | table_id:uint32、长度前缀 ticker | ticker_code:uint32 |
 | 4 | DICTIONARY | table_id:uint32、start_code:uint32、limit:uint32 | 快照序号、条目数、编号与字符串列表 |
 | 5 | SERIES | table_id:uint32、code:uint32、start:uint32、end_exclusive:uint64 | 行情结果分块 |
-| 6 | CROSS | table_id:uint32、time_key:uint32 | 行情结果分块 |
+| 6 | CROSS | table_id:uint32、time_key:uint32，可选证券集合（见下文） | 行情结果分块 |
 | 7 | REGISTER | table_id:uint32、长度前缀 ticker | code:uint32、commit_seq:uint64 |
 | 8 | WRITE | table_id:uint32、count:uint32、count 条 40 B 写入记录 | commit_seq:uint64 |
 | 9 | TABLE_CREATE | name、period_unit、period_count、timezone、description，编码同建表 WAL 载荷 | table_id:uint32、commit_seq:uint64 |
@@ -871,6 +877,12 @@ TLS 传输层不改变核心数据库的 C17 数据格式。
 
 字符串使用 uint32 字节长度前缀，不依赖 NUL 终止。HELLO 必须为第一个请求。
 HELLO 响应为 UUID 的 16 B 加四项 uint32，分别表示后四项参数。
+CROSS 的 8 B 请求保持全表查询；扩展请求在其后追加 `count:uint32` 与 count 个长度前缀证券名称。
+count 为 0 表示空集合；最多 65,536 个名称，每个 1..4096 字节，整体仍受协商帧和内存预算限制。
+服务端在查询快照中解析名称，忽略未知证券、去除重复编号，按表内编号排序；不创建证券。
+请求长度、名称长度及计数必须完全匹配，不允许尾随内容。扩展查询继续返回 kind=2。
+该扩展不改变既有帧、CROSS 全表请求、C ABI 或磁盘格式；使用筛选需要更新服务端与 C 客户端/shell。
+旧服务端拒绝扩展请求，不回退为全表查询。
 DICTIONARY 响应开头为 `snapshot_seq:uint64 + count:uint32`，随后每项为 `code:uint32 + 字符串`；编号稳定，分页之间新增证券不改变已有条目。
 在同一表中对已存在 ticker 再次 REGISTER 返回原编号。REGISTER 是可选的底层预留接口，正常写入无需调用。
 
@@ -1008,6 +1020,11 @@ WAL 计数边界取自捕获快照时，不将刷盘期间的新日志误算为�
 | 横截面查询 | 输入表和真实时间，按证券编号返回流式游标 |
 | 游标读取、关闭 | 有界结果块；关闭或取消释放读根与在途资源 |
 
+C 新增 `ohlc_cross_tickers` / `ohlc_client_cross_tickers`，以精确字节名称数组指定横截面集合。
+名称仅在调用期间借用，游标拥有排序去重后的编号数组，直到关闭时释放并计入引擎内存预算。
+未知名称和该时间缺失的行情不输出；同一快照内解析名称和读取行情，避免分次查询混用快照。
+原有 C、Python、Java 单股范围 API 仍为半开区间；shell 闭区间语法由客户端换算，不改变 SDK 契约。
+
 SDK 和 shell 接受普通日期时间，并根据表定义转换为规范化 time_key；协议和引擎入口仍使用固定宽度整数。
 日期时间解析、时区换算在批量准备阶段完成，不在提取每条结果的存储热路径中重复执行。
 可提供直接传入规范化时间键的低层批量接口；它传递的是实际时间，不是内部 time_code。
@@ -1134,7 +1151,8 @@ ohlc --socket /run/ohlc/ohlcd.sock --file queries.ohlc
 
 常规 ticker 可直接写为 `AAPL` 或 `300600`，数字形式也作为字符串处理。包含空格、分号或其他特殊字节时使用引号。
 单双引号均表示字符串；支持明确的引号、反斜杠和 `\xHH` 字节转义。解析器按字节保存证券标识，显示时转义控制字符和非文本字节，防止终端控制序列被执行。
-命令长度、脚本嵌套深度和临时字符串内存均设置上限。首版不提供执行系统命令的转义入口。
+命令长度最多 65,536 字节，最多 8,192 个词元（包含集合的括号和逗号）；
+脚本嵌套深度和临时字符串内存也有上限。首版不提供执行系统命令的转义入口。
 
 时间语法由打开的表定义决定：
 
@@ -1149,14 +1167,23 @@ ohlc --socket /run/ohlc/ohlcd.sock --file queries.ohlc
 表格默认按表时区显示分钟类时间，日类表显示日期；机器输出保留可无损还原的规范化 time_key。
 成交量、成交额、价格和因子保持输入整数单位，不做缩放或复权。
 
-`series` 使用 `from` 包含起点、`to` 排除终点，严格对应引擎的半开区间。
-规范化起点、`cross` 时间及写入时间限制在 uint32 范围；`series` 的终点允许 `@4294967296`。
+`series` 使用 `from START and END` 表示闭区间 `[START, END]`，包含两端；旧 `to` 语法移除。
+规范化起点与终点、`cross` 时间及写入时间均限制在 uint32 范围；shell 不接受 `@4294967296`。
+起点大于终点时拒绝；起点等于终点时查询该时点。shell 将终点提升到 uint64 后加 1，
+转换为引擎半开区间的排除边界；最大终点 `@4294967295` 不回绕。
+加 1 的单位是规范化时间键（分钟或天），不是表的 Nm/Nd 周期；不扩展到当日结束或下一个周期。
+
+`cross TABLE TIME and ticker in ('AAPL', 'GOOGL', 'INTL')` 指定证券集合；不带子句仍查询全部证券。
+括号和逗号允许紧贴名称，名称使用已有的引号、大小写和精确字节转义规则；名称中的括号、逗号须加引号或转义。
+重复证券只返回一次，结果仍按表内证券编号排序，不按列表输入顺序排序。
+证券不属于该表字典、或该时点没有行情时忽略；空集合与全部未命中均返回成功空结果，不自动注册。
+集合条件必须置于时间之后、输出选项之前；缺少分隔符、尾随逗号、未闭合括号和空名称均报错。
 
 ### 16.4 命令集
 
 | 命令 | 用途及行为 |
 |---|---|
-| `help [command];` | 查看命令、参数、七字段顺序和示例 |
+| `help [command\|examples\|keys];` | 查看命令、参数、七字段顺序、示例或键盘快捷键 |
 | `connect [connection-options];` | 建立连接并执行 HELLO；只能在没有在途请求时切换目标 |
 | `disconnect;` | 关闭当前连接 |
 | `status;` | 显示连接信息、UUID、协商版本、权限、限制及上条命令状态 |
@@ -1170,8 +1197,8 @@ ohlc --socket /run/ohlc/ohlcd.sock --file queries.ohlc
 | `tickers <table> [prefix];` | 分页读取字典；可在客户端按原始字节前缀筛选 |
 | `resolve <table> <ticker>;` | 取得证券编号 |
 | `register <table> <ticker>;` | 可选地预留本表证券编号，需要写权限 |
-| `series <table> <ticker> from <start> to <end> [options];` | 单股范围查询，按真实时间递增返回 |
-| `cross <table> <time> [options];` | 指定真实时间的横截面查询，按证券编号递增返回 |
+| `series <table> <ticker> from <start> and <end> [options];` | 单股闭区间查询，按真实时间递增返回 |
+| `cross <table> <time> [and ticker in (<ticker>, ...)] [options];` | 指定真实时间的横截面，可筛选证券集合，按证券编号递增返回 |
 | `insert <table> <ticker> <time> <open> <high> <low> <close> <volume> <amount> <adjust_factor>;` | 一条完整行情作为一个原子批次提交 |
 | `import <table> <path> [options];` | 读取客户端本地九列文本，按批次导入 |
 | `source <path>;` | 执行客户端本地命令脚本，失败时停止该脚本 |
@@ -1194,8 +1221,9 @@ ohlc> insert bars_3m "AAPL" "20260901 09:33:00" 10080 10120 10050 10100 1500 151
 ohlc> insert bars_3m "AAPL" "20260901 09:36:00" 10100 10150 10070 10120 1800 18216000 1000000;
 ohlc> insert bars_5d "AAPL" "20260901" 10000 10500 9800 10400 18000 183600000 1000000;
 ohlc> cross bars_5d "20260901";
-ohlc> series bars_3m "AAPL" from "2026-09-25T13:30:00Z" to "2026-09-25T20:00:00Z";
+ohlc> series bars_3m "AAPL" from "2026-09-25T13:30:00Z" and "2026-09-25T20:00:00Z";
 ohlc> cross bars_3m "2026-09-25T13:30:00Z";
+ohlc> cross bars_3m "20260901 09:30:00" and ticker in ('AAPL', 'GOOGL', 'INTL');
 ohlc> cross bars_3m "20260901 09:30:00" --format csv --output "cross.csv";
 ohlc> import bars_3m "bars.tsv" --format tsv --batch-rows 20000;
 ohlc> quit;
@@ -1219,11 +1247,21 @@ ohlc> quit;
 
 | 输入 | 展示内容 |
 |---|---|
-| `help;` | 按表管理、查询、证券、写入、连接和客户端操作分组的命令总览，每个命令附一句用途 |
+| `help;` | 按 Tables、Queries、Securities、Writes、Connection、Shell 分组的命令总览，每个命令附一句用途 |
 | `help <command>;` | 指定命令的用途、语法、必填参数、选项及默认值、权限要求、注意事项和示例 |
 | `help examples;` | 常用命令示例，包括两类查询、完整导出、证券注册、建表、单条写入和批量导入 |
 
-交互模式下，完整的 `help`、`help <command>` 和 `help examples` 也可以直接按 Enter 执行，无需分号。
+总览使用独立的简短摘要，不直接打印详细说明；快照回收、批次持久性和退出码等细节放入命令帮助。
+详细帮助统一使用 Usage、Arguments、Options、Defaults、Notes、Time values、Examples 等标题，
+按命令需要显示；字段顺序与整数类型仅在写入/导入帮助中显示，查询选项逐项列出。
+每个段落之间留空行，续行保持说明列或段落缩进，Current settings 独立成节。
+
+英文帮助默认按 80 列排版；终端小于 80 列时按实际宽度换行，小于 56 列时将标签和说明改为上下排列。
+非终端输出使用固定 80 列，不输出颜色或终端控制序列。示例只在引号外的词元间换行，
+不拆开日期时间参数；示例注释换行后继续以 `#` 开头，复制多行命令时仍保持原来的参数。
+命令定义、分组、摘要、详细说明和示例统一维护于 `src/shell_help.c`，供帮助、命令识别和补全共用。
+
+交互模式下，完整的 `help`、`help <command>`、`help examples` 和 `help keys` 也可以直接按 Enter 执行，无需分号。
 脚本仍使用统一的命令分隔规则。未知帮助主题明确提示不存在，并引导使用 `help;`；不猜测并执行其他命令。
 
 `help series;` 的展示示例：
@@ -1232,13 +1270,13 @@ ohlc> quit;
 series — 查询一只股票在指定表中的一段行情
 
 用法：
-  series <table> <ticker> from <start> to <end> [options];
+  series <table> <ticker> from <start> and <end> [options];
 
 参数：
   table    已创建的表名
   ticker   证券标识，例如 "AAPL"、"300600"
   start    包含起点；对应表的日期时间/日期，或 @规范化真实时间键
-  end      排除终点；对应表的日期时间/日期，或 @规范化真实时间键
+  end      包含终点；对应表的日期时间/日期，或 @规范化真实时间键
 
 选项：
   --format table|tsv|csv|jsonl   输出格式
@@ -1253,12 +1291,13 @@ series — 查询一只股票在指定表中的一段行情
 权限：需要已认证的读权限；表已创建，证券已注册。
 
 示例：
-  series bars_3m "AAPL" from "2026-09-25T13:30:00Z" to "2026-09-25T20:00:00Z";
-  series bars_3m "AAPL" from @29839050 to @29839440 --all;
-  series bars_3m "AAPL" from @29839050 to @29839440 --format csv --output "aapl.csv";
+  series bars_3m "AAPL" from "2026-09-25T13:30:00Z" and "2026-09-25T20:00:00Z";
+  series bars_1d "AAPL" from "20260901" and "20260930" --all;
+  series bars_3m "AAPL" from @29839050 and @29839440 --all;
+  series bars_3m "AAPL" from @29839050 and @29839440 --format csv --output "aapl.csv";
 
 说明：
-  区间为 [start, end)，to 指定的时间不包含在结果中。
+  区间为 [start, end]，and 指定的时间包含在结果中；旧 to 语法不再接受。
   无偏移日期时间按表时区解释；日类表输入日期。
   @ 后是规范化真实时间键，不是内部时间编号；分钟类单位为分钟，日类单位为天。
   预览截断会明确标记；完整结果以成功 FINAL 为完成条件。
@@ -1269,6 +1308,7 @@ series — 查询一只股票在指定表中的一段行情
 ```text
 # Create a table; requires write access
 create bars_3m --period 3m --timezone Asia/Shanghai;
+create bars_1d --period 1d;
 
 # List tables and inspect a definition
 tables;
@@ -1279,6 +1319,13 @@ resolve bars_3m "AAPL";
 
 # Query all tickers at one minute
 cross bars_3m "2026-09-25T13:30:00Z";
+
+# Query daily bars, including both boundary dates
+series bars_1d "AAPL" from "20260901" and "20260930" --all;
+
+# Query daily bars for all or selected securities
+cross bars_1d "20260901";
+cross bars_1d "20260901" and ticker in ('AAPL', 'GOOGL', 'INTL');
 
 # Export the complete cross-section to a local file
 cross bars_3m @29839050 --format tsv --output "cross.tsv";
@@ -1295,7 +1342,8 @@ import bars_3m "bars.tsv" --format tsv --batch-rows 20000;
 
 帮助只展示示例，不执行示例，不创建文件、表或注册证券。示例中的数值用于说明输入形式，不表示数据库中已经存在对应行情。
 `help insert;` 显示七字段顺序和整数范围；`help import;` 显示九列表头、各表时间输入类型、批次边界和失败后的已确认进度语义。
-`help cross;` 显示表参数、时间表示、排序、预览与导出选项，其示例遵守同样的整数和时区规则。
+`help series;` 与 `help cross;` 均提供标明分钟级和日级的示例；日级表使用 `bars_1d` 和日期参数。
+`help cross;` 同时展示日级全表、指定证券集合和文件导出，其示例遵守同样的整数和时区规则。
 
 命令解析、补全和帮助共用一份命令定义，集中维护名称、参数、选项默认值及示例，减少语法与说明不同步。
 帮助输出使用可读文本；非终端模式不输出颜色或交互控制字符。交互帮助同时标明当前会话实际生效的格式和预览限制。
@@ -1310,10 +1358,38 @@ import bars_3m "bars.tsv" --format tsv --batch-rows 20000;
 历史保存可关闭，历史文件仅对当前用户可读写。凭据内容不得进入历史、提示符和诊断日志。
 终端行编辑通过独立适配层接入；非交互模式使用相同命令解析器，不依赖终端功能。
 
+编辑器在 `src/shell_edit.c` 内实现常用 Emacs 风格按键，不增加外部行编辑库依赖。
+`help keys;` 列出快捷键及搜索的接受、提交和取消方式：
+
+| 按键 | 行为 |
+|---|---|
+| Ctrl+A / Home、Ctrl+E / End | 到当前输入行首、行尾 |
+| Ctrl+B/F、左右方向键 | 前后移动一个字节；沿用任意字节的转义显示，不作 Unicode 字素编辑 |
+| Alt+B/F、Ctrl+左右方向键 | 前后移动一个单词；单词由字母、数字、下划线组成 |
+| Ctrl+K、Ctrl+U | 剪切光标到行尾、行首到光标的内容 |
+| Ctrl+W | 剪切前一个由空白分隔的词 |
+| Alt+D、Alt+Backspace | 剪切后一个、前一个单词 |
+| Ctrl+Y | 粘回最近剪切的内容；连续剪切按文本顺序累积，缓冲跨提示符保留 |
+| Backspace / Ctrl+H、Delete / Ctrl+D | 删除光标前、光标处的一个字节 |
+| Ctrl+T | 交换光标前与光标处的字节；行尾交换最后两个字节 |
+| Ctrl+L | 清屏并重画当前输入 |
+| Ctrl+P/N、上下方向键 | 上一条、下一条历史；越过最新历史时恢复原草稿及光标位置 |
+| Ctrl+R | 增量反向搜索；输入关键词即时匹配，重复按键寻找更早匹配，Backspace 缩短关键词 |
+| 搜索时 Enter、Esc、Ctrl+G | 分别接受并提交、接受后继续编辑、取消并恢复搜索前输入和光标 |
+
+搜索按大小写敏感子串匹配，不请求服务端；无匹配时显示失败状态并保留最后匹配。
+其他编辑键先接受当前匹配再执行编辑；Ctrl+C 直接取消整条待执行命令。
+Alt 组合也可用连续输入 Esc 和相应键发送；Esc 序列字节间等待最多 100 ms。
+编辑行最多 65,536 B；最多保留 200 条、每条不超过 4,096 B 的历史，搜索关键词最多 4,096 B。
+`set history off` / `--no-history` 禁止历史记录和查找，不改变既有历史文件；重新启用后可继续使用原历史。
+粘回操作若会超过行长度上限则保持原行不变。长行及搜索关键词按终端宽度截取显示，
+任意字节仍以安全转义输出；编辑结束、取消和 I/O 失败时恢复原终端设置。
+
 Ctrl+C 在编辑阶段清空当前未执行输入；在查询阶段取消当前查询并返回提示符。
 首版取消在途网络查询通过关闭该连接实现，服务端据此取消请求并在在途 I/O 完成后释放读根。
 下一条命令可以重新建立连接，但不得自动重放被取消或结果不确定的命令。
-Ctrl+D 在空输入时退出；未完成命令先报告未完成状态，不静默执行残缺输入。
+Ctrl+D 在空输入时退出；非空行内删除光标处字节，行尾不退出。
+未完成命令先报告未完成状态，不静默执行残缺输入。
 
 ### 16.6 输出、预览与完整结果
 
@@ -1706,7 +1782,7 @@ mkdir -p data
 help examples;
 create bars_3m --period 3m --timezone Asia/Shanghai;
 insert bars_3m AAPL "20260901 09:30:00" 10000 10100 9950 10080 1200 12100000 1000000;
-series bars_3m AAPL from "20260901 09:30:00" to "20260901 10:00:00";
+series bars_3m AAPL from "20260901 09:30:00" and "20260901 10:00:00";
 cross bars_3m "20260901 09:30:00";
 quit;
 ```
@@ -1996,3 +2072,19 @@ C/Python/Java 网络与嵌入式接口、shell 插入与导入及表级字典查
 2026-09-28 已构建 EL8/EL9 Release 4 RPM，并在专用 RHEL 9 测试机安装和验证服务；
 结果与平台边界见 [RPM 安装验收](test-report.md#表级证券字典-rpm-安装验收2026-09-28)。
 既有 2026-09-27 性能数字属于格式 4 的旧实现，不代表本次字典与名称写入路径的性能。
+
+## 24. shell 查询修订（2026-09-28）
+
+已实现 `series from START and END` 闭区间并移除旧 `to` 语法；
+`cross` 支持 `and ticker in (...)`，在服务端同一快照内完成名称解析和数据筛选。
+语法、边界、去重与缺失处理见第 16.3 节；筛选算法和协议扩展见第 8.1、14.3 节。
+macOS 定向功能验收已通过，详见 [shell 查询验收](test-report.md#shell-查询修订验收2026-09-28)。
+本次尚未重新打包或部署到测试服务器，不将上一轮 RPM 验收视为本修订的 Linux 验收。
+
+帮助排版已分组并区分总览与详细说明；`series`、`cross` 均加入日级示例。
+80/60/40 列终端检查及示例词元一致性验证已通过，详见
+[帮助排版验收](test-report.md#shell-帮助排版验收2026-09-28)。
+
+终端编辑已补齐第 16.5 节的快捷键、增量历史搜索及草稿恢复，新增 `help keys;`。
+macOS 伪终端与既有 transport 回归通过，详见
+[行编辑验收](test-report.md#shell-行编辑验收2026-09-28)；本轮未重新构建 RPM 或部署。
