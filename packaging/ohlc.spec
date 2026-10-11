@@ -194,33 +194,5 @@ getent passwd ohlc >/dev/null || \
 
 %changelog
 * Sun Oct 11 2026 chengyan <chengyan.cy@gmail.com> - 0.1.0~beta.1-10
-- Use nullable 64-byte rows, int64 prices and uint64 volume/factor.
-- Add optional int32 reserved, eight validity bits and 8 KiB data tiles.
-- Update disk/protocol to 6 and C ABI to 4; old formats are unsupported.
-
-* Sun Oct 11 2026 OHLC contributors - 0.1.0~beta.1-9
-- Allow service-owned custom data directories with ProtectSystem=full.
-- Document data directory permissions and separate mount dependencies.
-- Accept Java 17 or Java 21 runtimes without forcing a Java 17 installation.
-
-* Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-8
-- Unify public series queries to inclusive start and end bounds.
-- Update the network protocol to 5 and C ABI to 3; retain disk format 5.
-
-* Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-7
-- Complete insert help examples for second, minute, day, month and year bars.
-
-* Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-6
-- Add second, month and year periods with uint32 time keys.
-- Update shell help and C, Python, Java and JNI interfaces for the new periods.
-
-* Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-5
-- Add inclusive shell series ranges and server-side cross ticker filters.
-- Improve help layout and examples, keyboard editing, and history search.
-
-* Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-4
-- Use per-table ticker dictionaries and atomic automatic ticker registration.
-- Update the disk format to 5, network protocol to 4, and C ABI to 2.
-
-* Sun Sep 27 2026 OHLC contributors - 0.1.0~beta.1-1
-- Initial beta packaging for RHEL 8 and 9.
+- First-release baseline for RHEL 8 and 9 with C, Python and Java interfaces.
+- Nullable 64-byte rows, 8 KiB tiles, disk/protocol 6 and C ABI 4.

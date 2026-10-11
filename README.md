@@ -15,11 +15,11 @@ and an interactive command shell.
 
 [Why integer values](#why-integer-values) · [Quick start](#quick-start) ·
 [Client libraries](#client-libraries) ·
-[RHEL packages](#rhel-packages) · [Benchmarks](#benchmarks) ·
+[RHEL packages](#rhel-packages) · [Validation](#validation-and-performance) ·
 [Design](docs/design.md) · [Test report](docs/test-report.md)
 
-Current development format: **disk 6 / protocol 6 / C ABI 4**. Only the current layout is implemented; no format conversion or migration is provided.
-Update the server, libraries, and bindings together: rows now use the nullable 64-byte format.
+First release: **`0.1.0-beta.1`**, with nullable 64-byte rows, **disk format 6 / protocol 6 / C ABI 4**.
+Use matching server, library, and language-binding versions.
 
 ## What it provides
 
@@ -181,10 +181,9 @@ Second/minute tables require a time zone; date-based tables have none. Second ke
 1970-01-01T00:00:00Z through 2106-02-07T06:28:15Z, inclusive. Seconds must be `00` for minute
 tables; fractional and leap seconds are rejected. Periods never round or aggregate input:
 `5s` accepts `09:30:17`, and month/year bars can use any valid date within the time-key range.
-Update the server and clients together to use the new units; update Java JAR/JNI together.
-Period selection does not alter the shared row schema or the meaning of minute/day keys.
+All periods share the same row schema. Use matching Java JAR and JNI libraries.
 
-Shell `series ... from START and END` includes both endpoints; the old `to` syntax is removed.
+Shell `series ... from START and END` includes both endpoints.
 `cross ... and ticker in (...)` filters on the server, ignores unknown tickers and missing bars,
 and returns each match once in table-local ticker-code order. Without the clause, all tickers
 are queried. C, Python and Java series APIs use the same inclusive endpoints.
@@ -361,50 +360,25 @@ See the [storage diagram](docs/images/ohlc-storage-index-overview.svg),
 [addressing diagram](docs/images/ohlc-block-addressing.svg), and
 [canonical design](docs/design.md) for the format and algorithms.
 
-## Benchmarks
+## Validation and performance
 
-These historical measurements use the former 32-byte row format, not the current 64-byte layout.
+The first-release source passes all **11 CTest checks in EL8 userspace on a RHEL 8 kernel**,
+covering storage, recovery, concurrency, C/Python/Java interfaces, shell, TLS, and administration.
+See the [test report](docs/test-report.md) for the source reference, environment, and evidence.
 
-Measured on **2026-09-27**, using **85,800,000 rows: 10,000 tickers × 8,580 minute bars**,
-on RHEL 9.4 x86-64 with NVMe storage and same-host TCP clients. Every timed query receives and
-decodes all seven fields. These are configuration-specific measurements, not universal rankings.
-
-| Measurement | ohlc beta.1 | MySQL 8.0.46 | ClickHouse 25.8.31.9 | InfluxDB 2.9.1 OSS |
-|---|---:|---:|---:|---:|
-| Batch submission, seconds | 19.333 | 443.147 | 100.021 | 1,175.621 |
-| 240-row series, warm p50, ms | 0.257 | 0.400 | 2.629 | 5.011 |
-| 10,000-row cross-section, warm p50, ms | 4.313 | 5.054 | 59.884 | 421.611 |
-| Cross-section after reopen, median, ms | 52.162 | 8.382 | 274.517 | 502.065 |
-| Mixed reads, 16 clients, median QPS | 3,792.5 | 5,256.9 | 389.7 | Failed: OOM |
-
-The ohlc batch result is approximately **4.44 million rows/second**. Including ticker registration
-and post-import checkpointing, those three phases took 37.60 seconds; initialization and validation
-are outside that total. Writes were configured for persistence before acknowledgment.
-
-The host had about 125 GiB RAM, and each service had a 32 GiB cgroup limit. ohlc used a 64 MiB block
-cache and a 1 GiB engine budget; MySQL used a 16 GiB buffer pool. The dataset could fit in host memory.
-First-query measurements evicted only the test database's file pages before reopening; startup
-reloads metadata. Protocols, cache budgets, and storage layouts differ across products.
-
-Bulk ingestion was ohlc's strongest result. MySQL was faster for long-range median latency,
-16-client mixed throughput, and the first cross-section after reopening. InfluxDB's failed
-16-client run is retained as a failure, not reported as a throughput number.
-
-The [full test report](docs/test-report.md) includes configurations, sample counts, tail latency,
-disk and memory measurements, correctness checks, reproduction commands, and 15 additional
-retirement/replacement scenarios. Benchmark programs are in [tests/baseline_driver.c](tests/baseline_driver.c)
-and [tools/baseline_compare.py](tools/baseline_compare.py). Raw evidence archives are separate
-artifacts and are not tracked in Git; the report lists their checksums but does not yet provide
-public download links.
+Performance has not been measured for this release. The [design](docs/design.md) provides
+capacity calculations, not measured throughput or latency. Benchmark tools are available in
+[tests/baseline_driver.c](tests/baseline_driver.c) and
+[tools/baseline_compare.py](tools/baseline_compare.py).
 
 ## Beta scope
 
-- **RHEL 9 x86-64:** validated on the Linux test server, including package installation and service operation.
-- **RHEL 8 x86-64:** tested with UBI 8 userspace and systemd on a RHEL 9 kernel; a standalone
-  RHEL 8 kernel has not been validated.
-- **Linux ARM64:** source build support is retained; no validated ARM64 release binaries or
-  Linux ARM64 runtime acceptance results are provided yet.
-- macOS is used for development; Linux is the deployment target.
+- **Linux x86-64:** source regression tests pass in EL8 userspace on a RHEL 8 kernel.
+- **RHEL 8/9 packages:** build definitions are provided; package builds and installation acceptance
+  remain pending for this source baseline.
+- **Java:** the API targets JDK 17 and 21 with Java 17 bytecode; this source baseline has been
+  validated with JDK 17. Complete JDK 21 acceptance remains pending.
+- **Linux ARM64 and macOS:** source build paths are provided; runtime acceptance remains pending.
 
 This beta has no per-row delete, automatic data compaction, replication, clustering, or shared
 file access across processes. It stores the caller's adjustment factor without calculating or
