@@ -6,7 +6,7 @@
   <rect x="64" y="238" width="1030" height="770" rx="16" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
   <rect x="96" y="264" width="42" height="42" rx="21" fill="#2563C8" stroke="none" stroke-width="1.5" />
   <text x="108.25" y="295.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="29" font-weight="600" dominant-baseline="alphabetic" fill="#FFFFFF">3</text>
-  <text x="154.00" y="294.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">16 股 × 8 个内部时间编号 = 128 格 = 4 KiB</text>
+  <text x="154.00" y="294.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">16 股 × 8 个内部时间编号 = 128 格 = 8 KiB</text>
   <text x="269.00" y="342.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">块内编号 col</text>
   <text x="130.00" y="365.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">证券 row</text>
   <text x="306.25" y="363.80" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0</text>
@@ -179,45 +179,53 @@
   <polyline points="1165,582 1820,582" fill="none" stroke="#D8E2ED" stroke-width="2" stroke-linejoin="round" />
   <text x="1165.00" y="630.60" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="24" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">非空块按 j = 0、4、13 连续存放</text>
   <text x="1165.00" y="677.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">rank = 2</text>
-  <text x="1165.00" y="721.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">tile_offset = base_offset + 8192</text>
+  <text x="1165.00" y="721.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">tile_offset = base_offset + 16384</text>
   <text x="1165.00" y="770.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">slot = 5 × 8 + 3 = 43</text>
-  <text x="1165.00" y="813.40" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">块内偏移 = 43 × 32 = 1376 B</text>
+  <text x="1165.00" y="813.40" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="400" dominant-baseline="alphabetic" fill="#15263E">块内偏移 = 43 × 64 = 2752 B</text>
   <rect x="1164" y="845" width="656" height="111" rx="12" fill="#FFF0D1" stroke="#E2B262" stroke-width="1.5" />
   <text x="1187.00" y="884.40" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">record_offset</text>
-  <text x="1187.00" y="932.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="33" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">= base_offset + 9568</text>
+  <text x="1187.00" y="932.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="33" font-weight="600" dominant-baseline="alphabetic" fill="#B86400">= base_offset + 19136</text>
   <text x="1165.00" y="994.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">确认存在位并校验块，再返回行情。</text>
   <rect x="64" y="1050" width="1792" height="322" rx="16" fill="#FFFFFF" stroke="#D8E2ED" stroke-width="1.5" />
-  <text x="100.00" y="1106.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">放大一条行情：七个字段固定顺序，连续 32 B</text>
+  <text x="100.00" y="1106.90" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="31" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">放大一条行情：八个可空字段固定顺序，连续 64 B</text>
   <text x="117.00" y="1146.20" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="18" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">字节偏移</text>
-  <text x="116.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0</text>
-  <rect x="116" y="1181" width="211.0" height="108" rx="0" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
-  <text x="192.75" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">open</text>
-  <text x="156.00" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">int32  ·  4 B</text>
-  <text x="327.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">4</text>
-  <rect x="327.0" y="1181" width="211.0" height="108" rx="0" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
-  <text x="408.25" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">high</text>
-  <text x="367.00" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">int32  ·  4 B</text>
-  <text x="538.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">8</text>
-  <rect x="538.0" y="1181" width="211.0" height="108" rx="0" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
-  <text x="624.50" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">low</text>
-  <text x="578.00" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">int32  ·  4 B</text>
-  <text x="749.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">12</text>
-  <rect x="749.0" y="1181" width="211.0" height="108" rx="0" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
-  <text x="824.75" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">close</text>
-  <text x="789.00" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">int32  ·  4 B</text>
-  <text x="960.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">16</text>
-  <rect x="960.0" y="1181" width="211.0" height="108" rx="0" fill="#E3F5F1" stroke="#BECFDE" stroke-width="1.5" />
-  <text x="1024.50" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">volume</text>
-  <text x="993.75" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">uint32  ·  4 B</text>
-  <text x="1171.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">20</text>
-  <rect x="1171.0" y="1181" width="422.0" height="108" rx="0" fill="#E3F5F1" stroke="#BECFDE" stroke-width="1.5" />
-  <text x="1338.25" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">amount</text>
-  <text x="1310.25" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">uint64  ·  8 B</text>
-  <text x="1593.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">28</text>
-  <rect x="1593.0" y="1181" width="211.0" height="108" rx="0" fill="#FFF0D1" stroke="#BECFDE" stroke-width="1.5" />
-  <text x="1622.50" y="1223.50" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" font-weight="600" dominant-baseline="alphabetic" fill="#15263E">adjust_factor</text>
-  <text x="1626.75" y="1266.00" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">uint32  ·  4 B</text>
-  <text x="1779.00" y="1171.10" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">32</text>
-  <text x="116.00" y="1340.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">32 B 内不保存表、证券、时间键、内部编号或字段名；七字段原样保存，不压缩。</text>
-  <text x="65.00" y="1430.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0.1.0-beta.1 · 磁盘格式 5  |  行编码为小端；amount 从偏移 20 开始，不能直接映射 C 结构体。</text>
+  <text x="116.0" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">0</text>
+  <rect x="116.0" y="1181" width="211.0" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="221.5" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" text-anchor="middle" fill="#15263E">open</text>
+  <text x="221.5" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" text-anchor="middle" fill="#60718A">int64 · 8 B</text>
+  <text x="327.0" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">8</text>
+  <rect x="327.0" y="1181" width="211.0" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="432.5" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" text-anchor="middle" fill="#15263E">high</text>
+  <text x="432.5" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" text-anchor="middle" fill="#60718A">int64 · 8 B</text>
+  <text x="538.0" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">16</text>
+  <rect x="538.0" y="1181" width="211.0" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="643.5" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" text-anchor="middle" fill="#15263E">low</text>
+  <text x="643.5" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" text-anchor="middle" fill="#60718A">int64 · 8 B</text>
+  <text x="749.0" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">24</text>
+  <rect x="749.0" y="1181" width="211.0" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="854.5" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" text-anchor="middle" fill="#15263E">close</text>
+  <text x="854.5" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" text-anchor="middle" fill="#60718A">int64 · 8 B</text>
+  <text x="960.0" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">32</text>
+  <rect x="960.0" y="1181" width="211.0" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="1065.5" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" text-anchor="middle" fill="#15263E">volume</text>
+  <text x="1065.5" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" text-anchor="middle" fill="#60718A">uint64 · 8 B</text>
+  <text x="1171.0" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">40</text>
+  <rect x="1171.0" y="1181" width="211.0" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="1276.5" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" text-anchor="middle" fill="#15263E">amount</text>
+  <text x="1276.5" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" text-anchor="middle" fill="#60718A">uint64 · 8 B</text>
+  <text x="1382.0" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">48</text>
+  <rect x="1382.0" y="1181" width="211.0" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="1487.5" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="25" text-anchor="middle" fill="#15263E">adjust_factor</text>
+  <text x="1487.5" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="20" text-anchor="middle" fill="#60718A">uint64 · 8 B</text>
+  <text x="1593.0" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">56</text>
+  <rect x="1593.0" y="1181" width="105.5" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="1645.75" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="18" text-anchor="middle" fill="#15263E">reserved</text>
+  <text x="1645.75" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="15" text-anchor="middle" fill="#60718A">int32 · 4 B</text>
+  <text x="1698.5" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">60</text>
+  <rect x="1698.5" y="1181" width="105.5" height="108" fill="#EAF2FF" stroke="#BECFDE" stroke-width="1.5" />
+  <text x="1751.25" y="1224" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="18" text-anchor="middle" fill="#15263E">flags</text>
+  <text x="1751.25" y="1266" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="15" text-anchor="middle" fill="#60718A">uint32 · 4 B</text>
+  <text x="1780" y="1171" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="19" fill="#60718A">64</text>
+  <text x="116.00" y="1340.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">64 B 内不保存表、证券、时间键、内部编号或字段名；flags 低 8 位表示非空，高 24 位保留，不压缩。</text>
+  <text x="65.00" y="1430.70" font-family="Hiragino Sans GB, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" dominant-baseline="alphabetic" fill="#60718A">0.1.0-beta.1 · 磁盘格式 6  |  行编码为小端；有效位在偏移 60；结果缓冲区不能直接映射 C 结构体。</text>
 </svg>

@@ -24,7 +24,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  */
 public final class Database implements AutoCloseable {
     private static final Cleaner CLEANER = Cleaner.create();
-    public static final int MAX_WRITE_ROWS = 250000;
+    public static final int MAX_WRITE_ROWS = 200000;
     private final State state;
     private final Cleaner.Cleanable cleanable;
 
@@ -36,7 +36,7 @@ public final class Database implements AutoCloseable {
             } else {
                 System.load(Path.of(path).toAbsolutePath().toString());
             }
-            if (abiVersion() != 3) {
+            if (abiVersion() != 4) {
                 throw new UnsatisfiedLinkError("Incompatible ohlc native ABI");
             }
         }
@@ -432,7 +432,7 @@ public final class Database implements AutoCloseable {
             int size = rows.remaining();
             if (size == 0 || size % Ohlc.WRITE_BYTES != 0
                     || size / Ohlc.WRITE_BYTES > MAX_WRITE_ROWS) {
-                throw new IllegalArgumentException("Expected 1..250000 complete 40-byte records");
+                throw new IllegalArgumentException("Expected 1..200000 complete 72-byte records");
             }
             ByteBuffer source = rows.duplicate();
             if (!source.isDirect()) {
@@ -448,11 +448,25 @@ public final class Database implements AutoCloseable {
             }
         }
 
-        public long insert(String ticker, String time, int open, int high, int low, int close,
+        /** Insert seven present fields and a NULL reserved value. */
+        public long insert(String ticker, String time, long open, long high, long low, long close,
                            long volume, long amountBits, long factor) throws IOException {
+            return insert(ticker, time, new Ohlc.Row(open, high, low, close, volume, amountBits,
+                                                  factor, null));
+        }
+
+        /** Insert eight present fields; unsigned fields retain every long bit. */
+        public long insert(String ticker, String time, long open, long high, long low, long close,
+                           long volume, long amountBits, long factor, int reserved)
+                throws IOException {
+            return insert(ticker, time, new Ohlc.Row(open, high, low, close, volume, amountBits,
+                                                  factor, reserved));
+        }
+
+        /** Insert a complete row, replacing existing fields including NULLs. */
+        public long insert(String ticker, String time, Ohlc.Row value) throws IOException {
             ByteBuffer row = buffer(Ohlc.WRITE_BYTES);
-            Ohlc.putWrite(row, 0, timeKey(time), open, high, low, close, volume,
-                          amountBits, factor);
+            Ohlc.putWrite(row, 0, timeKey(time), value);
             return write(new byte[][] {ticker.getBytes(StandardCharsets.UTF_8)}, row.flip());
         }
 
@@ -529,7 +543,7 @@ public final class Database implements AutoCloseable {
             return sequence;
         }
 
-        /** Fill complete 36-byte results into a writable direct buffer and
+        /** Fill complete 68-byte results into a writable direct buffer and
          * advance its position. Return zero at EOF; at most 16384 rows per call.
          * Reusing the buffer avoids per-chunk allocation. Calls on this cursor
          * are serialized; different cursors may execute concurrently.

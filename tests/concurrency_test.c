@@ -34,7 +34,7 @@ static void* write_batches(void* argument) {
     }
     for (uint32_t generation = 1; generation <= 100; generation++) {
         for (uint32_t ticker = 0; ticker < 32; ticker++) {
-            ohlc_row row = {0};
+            ohlc_row row = {.flags = OHLC_FIELDS_ALL};
             row.close = (int32_t)generation;
             row.volume = ticker;
             row.amount = ((uint64_t)generation << 32) | ticker;
@@ -65,7 +65,7 @@ static void* read_snapshots(void* argument) {
                 sched_yield();
             }
         }
-        int32_t generation = -1;
+        int64_t generation = -1;
         size_t rows = 0;
         while (true) {
             uint8_t result[3 * OHLC_RESULT_BYTES];
@@ -131,7 +131,7 @@ int main(void) {
                           ohlc_register(context.db, context.table, ticker, &code, &sequence))) {
             return 1;
         }
-        ohlc_row initial = {0};
+        ohlc_row initial = {.flags = OHLC_FIELDS_MARKET};
         initial.volume = i;
         initial.amount = i;
         ohlc_write_encode(initial_batch + (size_t)i * OHLC_WRITE_BYTES, i, 42, &initial);

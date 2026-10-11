@@ -42,7 +42,7 @@ static ohlc_status record_write(ohlc_db* db, int fd, uint64_t* end, uint32_t typ
     if (record == NULL) {
         return OHLC_LIMIT;
     }
-    memcpy(record, "OIR5", 4);
+    memcpy(record, "OIR6", 4);
     ohlc_put_u32(record + 4, type);
     ohlc_put_u32(record + 8, (uint32_t)size);
     ohlc_put_u64(record + 16, db->checkpoint_generation + 1);
@@ -76,7 +76,7 @@ static ohlc_status record_read(ohlc_db* db, int fd, uint64_t offset, uint64_t pa
                                uint8_t** output, size_t* size) {
     *output = NULL;
     uint8_t header[32];
-    if (offset < OHLC_BLOCK_BYTES || offset % 8u != 0 || offset >= parent ||
+    if (offset < OHLC_PAGE_BYTES || offset % 8u != 0 || offset >= parent ||
         parent - offset < sizeof(header)) {
         return OHLC_CORRUPT;
     }
@@ -86,7 +86,7 @@ static ohlc_status record_read(ohlc_db* db, int fd, uint64_t offset, uint64_t pa
     }
     *size = ohlc_get_u32(header + 8);
     size_t total = (32u + *size + 7u) & ~(size_t)7u;
-    if (memcmp(header, "OIR5", 4) != 0 || ohlc_get_u32(header + 4) != type ||
+    if (memcmp(header, "OIR6", 4) != 0 || ohlc_get_u32(header + 4) != type ||
         *size > OHLC_RECORD_LIMIT || total > parent - offset || ohlc_get_u64(header + 24) != 0) {
         return OHLC_CORRUPT;
     }
@@ -243,7 +243,7 @@ static ohlc_status save_band(ohlc_db* db, ohlc_table_files* files, ohlc_band* ba
             continue;
         }
         if (page->disk_offset == 0) {
-            uint8_t groups[OHLC_BLOCK_BYTES + 1024] = {0};
+            uint8_t groups[OHLC_PAGE_BYTES + 1024] = {0};
             for (size_t j = 0; j < OHLC_PAGE_ENTRIES; j++) {
                 const ohlc_group* group = &page->groups[j];
                 if (group->flags != 0) {
@@ -264,7 +264,7 @@ static ohlc_status save_band(ohlc_db* db, ohlc_table_files* files, ohlc_band* ba
                         metadata_crc = ohlc_crc32c(metadata_crc, metadata, 32);
                     }
                 }
-                ohlc_put_u32(groups + OHLC_BLOCK_BYTES + j * 4, metadata_crc);
+                ohlc_put_u32(groups + OHLC_PAGE_BYTES + j * 4, metadata_crc);
             }
             status = record_save(db, files, OHLC_RECORD_GROUPS, groups, sizeof(groups),
                                  &page->disk_offset);
@@ -355,7 +355,7 @@ static ohlc_status load_band(ohlc_db* db, ohlc_table_files* files, uint64_t offs
         if (status != OHLC_OK) {
             goto cleanup;
         }
-        if (encoded_size != OHLC_BLOCK_BYTES + 1024) {
+        if (encoded_size != OHLC_PAGE_BYTES + 1024) {
             ohlc_free(&db->allocator, encoded);
             status = OHLC_CORRUPT;
             goto cleanup;
@@ -377,9 +377,9 @@ static ohlc_status load_band(ohlc_db* db, ohlc_table_files* files, uint64_t offs
             group->volume = ohlc_get_u32(encoded + j * 16u + 12);
             uint16_t flags = ohlc_get_u16(encoded + j * 16u + 10);
             if (flags != 0 || (group->mask == 0 && (group->base != 0 || group->volume != 0)) ||
-                (group->mask != 0 &&
-                 (group->base < OHLC_BLOCK_BYTES || group->base % OHLC_BLOCK_BYTES != 0 ||
-                  group->base > INT64_MAX - 16u * OHLC_BLOCK_BYTES))) {
+                (group->mask != 0 && (group->base < OHLC_PAGE_BYTES ||
+                                      (group->base - OHLC_PAGE_BYTES) % OHLC_BLOCK_BYTES != 0 ||
+                                      group->base > INT64_MAX - 16u * OHLC_BLOCK_BYTES))) {
                 status = OHLC_CORRUPT;
                 break;
             }
@@ -400,7 +400,7 @@ static ohlc_status load_band(ohlc_db* db, ohlc_table_files* files, uint64_t offs
                     }
                 }
             }
-            if (metadata_crc != ohlc_get_u32(encoded + OHLC_BLOCK_BYTES + j * 4)) {
+            if (metadata_crc != ohlc_get_u32(encoded + OHLC_PAGE_BYTES + j * 4)) {
                 status = OHLC_CORRUPT;
             }
             if (status != OHLC_OK) {
@@ -926,7 +926,7 @@ static ohlc_status checkpoint_read(ohlc_db* db, unsigned int slot, ohlc_checkpoi
     if (fd < 0) {
         return errno == ENOENT ? OHLC_OK : OHLC_IO;
     }
-    uint8_t bytes[OHLC_BLOCK_BYTES];
+    uint8_t bytes[OHLC_PAGE_BYTES];
     ohlc_status status = ohlc_read_full(fd, bytes, sizeof(bytes), 0);
     close(fd);
     if (status == OHLC_IO) {
@@ -937,7 +937,7 @@ static ohlc_status checkpoint_read(ohlc_db* db, unsigned int slot, ohlc_checkpoi
     }
     uint32_t crc = ohlc_get_u32(bytes + 4092);
     ohlc_put_u32(bytes + 4092, 0);
-    if (memcmp(bytes, "OHLCUR5\0", 8) != 0 || ohlc_get_u32(bytes + 8) != OHLC_FORMAT_VERSION ||
+    if (memcmp(bytes, "OHLCUR6\0", 8) != 0 || ohlc_get_u32(bytes + 8) != OHLC_FORMAT_VERSION ||
         memcmp(bytes + 16, db->uuid, 16) != 0 || crc != ohlc_crc32c(0, bytes, sizeof(bytes)) ||
         ohlc_get_u32(bytes + 12) != 0 || ohlc_get_u32(bytes + 60) != 0) {
         return OHLC_OK;
@@ -953,17 +953,17 @@ static ohlc_status checkpoint_read(ohlc_db* db, unsigned int slot, ohlc_checkpoi
     entry->wal_id = ohlc_get_u32(bytes + 56);
     entry->wal_offset = ohlc_get_u64(bytes + 64);
     entry->valid = entry->generation != 0 && entry->wal_id != 0 &&
-                   entry->wal_offset >= OHLC_BLOCK_BYTES && entry->wal_offset <= INT64_MAX &&
+                   entry->wal_offset >= OHLC_PAGE_BYTES && entry->wal_offset <= INT64_MAX &&
                    entry->wal_offset % 8u == 0;
     return OHLC_OK;
 }
 
 static ohlc_status checkpoint_write(ohlc_db* db, uint64_t seq, uint64_t catalog, uint32_t wal_id,
                                     uint64_t wal_offset) {
-    uint8_t bytes[OHLC_BLOCK_BYTES] = {0};
+    uint8_t bytes[OHLC_PAGE_BYTES] = {0};
     uint64_t generation = db->checkpoint_generation + 1;
     unsigned int slot = (unsigned int)((generation - 1) & 1u);
-    memcpy(bytes, "OHLCUR5\0", 8);
+    memcpy(bytes, "OHLCUR6\0", 8);
     ohlc_put_u32(bytes + 8, OHLC_FORMAT_VERSION);
     memcpy(bytes + 16, db->uuid, 16);
     ohlc_put_u64(bytes + 32, generation);
@@ -1312,7 +1312,7 @@ static ohlc_status wal_create(ohlc_db* db, uint32_t id, uint64_t start_seq) {
     }
     db->wal_fd = fd;
     db->wal_id = id;
-    db->wal_size = OHLC_BLOCK_BYTES;
+    db->wal_size = OHLC_PAGE_BYTES;
     return OHLC_OK;
 }
 
@@ -1327,7 +1327,7 @@ ohlc_status ohlc_wal_encode(ohlc_db* db, uint16_t type, uint32_t table, uint32_t
     if (frame == NULL) {
         return OHLC_LIMIT;
     }
-    memcpy(frame, "OHLCWTX5", 8);
+    memcpy(frame, "OHLCWTX6", 8);
     ohlc_put_u16(frame + 8, OHLC_FORMAT_VERSION);
     ohlc_put_u16(frame + 10, type);
     ohlc_put_u64(frame + 16, total);
@@ -1338,7 +1338,7 @@ ohlc_status ohlc_wal_encode(ohlc_db* db, uint16_t type, uint32_t table, uint32_t
     ohlc_put_u32(frame + 48, ohlc_crc32c(0, frame, 64));
     memcpy(frame + 64, payload, size);
     uint8_t* footer = frame + total - 32;
-    memcpy(footer, "OHLCEND5", 8);
+    memcpy(footer, "OHLCEND6", 8);
     ohlc_put_u64(footer + 8, total);
     ohlc_put_u64(footer + 16, seq);
     ohlc_put_u32(footer + 24, ohlc_crc32c(0, frame, total));
@@ -1424,7 +1424,7 @@ static ohlc_status replay_frame(ohlc_db* db, const uint8_t* frame) {
             status = OHLC_CORRUPT;
         }
     } else if (type == 2) {
-        if (count == 0 || count > OHLC_MAX_BATCH_ROWS || size != (size_t)count * 40u) {
+        if (count == 0 || count > OHLC_MAX_BATCH_ROWS || size != (size_t)count * OHLC_WRITE_BYTES) {
             return OHLC_CORRUPT;
         }
         status = ohlc_prepare_write(db, db->root, table, payload, count, &candidate);
@@ -1568,7 +1568,7 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
         }
         status = ohlc_storage_header(db, fd, 2, 0, (uint32_t)id, 0, false);
         if (status == OHLC_CORRUPT && id == last && id > checkpoint->wal_id &&
-            info.st_size < OHLC_BLOCK_BYTES && expected_seq == db->root->seq + 1) {
+            info.st_size < OHLC_PAGE_BYTES && expected_seq == db->root->seq + 1) {
             /* No transaction can be acknowledged before a new WAL header and
              * its directory entry are synced. Repair only this empty tail. */
             status = ohlc_storage_header(db, fd, 2, 0, (uint32_t)id, expected_seq, true);
@@ -1578,9 +1578,9 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
             if (status == OHLC_OK && fsync(db->directory_fd) != 0) {
                 status = OHLC_IO;
             }
-            info.st_size = OHLC_BLOCK_BYTES;
+            info.st_size = OHLC_PAGE_BYTES;
         }
-        uint64_t position = id == checkpoint->wal_id ? checkpoint->wal_offset : OHLC_BLOCK_BYTES;
+        uint64_t position = id == checkpoint->wal_id ? checkpoint->wal_offset : OHLC_PAGE_BYTES;
         if (status == OHLC_OK && position > (uint64_t)info.st_size) {
             status = OHLC_CORRUPT;
         }
@@ -1589,8 +1589,8 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
             status = ohlc_read_full(fd, start, sizeof(start), 64);
             if (status == OHLC_OK) {
                 uint64_t first_seq = ohlc_get_u64(start);
-                if (first_seq == 0 || (position == OHLC_BLOCK_BYTES && first_seq != expected_seq) ||
-                    (position != OHLC_BLOCK_BYTES && first_seq > checkpoint->seq)) {
+                if (first_seq == 0 || (position == OHLC_PAGE_BYTES && first_seq != expected_seq) ||
+                    (position != OHLC_PAGE_BYTES && first_seq > checkpoint->seq)) {
                     status = OHLC_CORRUPT;
                 }
             }
@@ -1610,7 +1610,7 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
             ohlc_put_u32(header + 48, 0);
             uint64_t total = ohlc_get_u64(header + 16);
             uint64_t payload_size = ohlc_get_u64(header + 40);
-            if (memcmp(header, "OHLCWTX5", 8) != 0 ||
+            if (memcmp(header, "OHLCWTX6", 8) != 0 ||
                 ohlc_get_u16(header + 8) != OHLC_FORMAT_VERSION || ohlc_get_u32(header + 12) != 0 ||
                 total < 96 || total > OHLC_FRAME_LIMIT || total % 8u != 0 ||
                 payload_size > total - 96 || total != 96u + ((payload_size + 7u) & ~UINT64_C(7)) ||
@@ -1633,7 +1633,7 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
                 uint8_t* footer = frame + total - 32;
                 uint32_t crc = ohlc_get_u32(footer + 24);
                 ohlc_put_u32(footer + 24, 0);
-                if (memcmp(footer, "OHLCEND5", 8) != 0 || ohlc_get_u64(footer + 8) != total ||
+                if (memcmp(footer, "OHLCEND6", 8) != 0 || ohlc_get_u64(footer + 8) != total ||
                     ohlc_get_u64(footer + 16) != expected_seq ||
                     ohlc_get_u64(header + 24) != expected_seq || expected_seq == 0 ||
                     ohlc_get_u32(footer + 28) != 0 || crc != ohlc_crc32c(0, frame, (size_t)total)) {

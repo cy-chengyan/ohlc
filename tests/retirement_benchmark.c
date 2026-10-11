@@ -89,6 +89,7 @@ static ohlc_row value_for(uint32_t stock, uint32_t minute) {
         .volume = volume,
         .amount = (uint64_t)(uint32_t)((open + close) / 2) * volume,
         .adjust_factor = 1000000u,
+        .flags = OHLC_FIELDS_MARKET,
     };
 }
 
@@ -210,7 +211,8 @@ static void check_row(const result_row* actual, uint32_t key, uint32_t stock, ui
     require(value->open == expected.open && value->high == expected.high &&
                 value->low == expected.low && value->close == expected.close &&
                 value->volume == expected.volume && value->amount == expected.amount &&
-                value->adjust_factor == expected.adjust_factor,
+                value->adjust_factor == expected.adjust_factor &&
+                value->reserved == expected.reserved && value->flags == expected.flags,
             "Seven-field oracle mismatch");
 }
 

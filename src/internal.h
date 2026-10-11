@@ -8,7 +8,10 @@
 #include <stdatomic.h>
 #include <sys/types.h>
 
-#define OHLC_BLOCK_BYTES 4096u
+bool ohlc_row_valid(const uint8_t input[OHLC_ROW_BYTES]);
+
+#define OHLC_PAGE_BYTES 4096u
+#define OHLC_BLOCK_BYTES 8192u
 #define OHLC_TIME_CAPACITY 508u
 #define OHLC_BRANCH_CAPACITY 256u
 #define OHLC_MAX_DEPTH 16u

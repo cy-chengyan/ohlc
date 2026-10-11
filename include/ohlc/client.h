@@ -73,7 +73,7 @@ ohlc_status ohlc_client_checkpoint(ohlc_client* client);
 
 /* Query start transmits a request. Next validates every chunk, including
  * ordering, snapshot identity, cumulative counts, and the successful FINAL.
- * rows is a borrowed view of count packed 36-byte rows. A successful call with
+ * rows is a borrowed view of count packed 68-byte rows. A successful call with
  * final=true completes the query, including any rows returned by that call.
  * Closing a connection cancels a query; partial results are never complete. */
 /* Query the closed range [start, end], with both bounds in uint32. Equal bounds

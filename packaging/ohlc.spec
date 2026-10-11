@@ -6,7 +6,7 @@
 
 Name:           ohlc
 Version:        0.1.0~beta.1
-Release:        9%{?dist}
+Release:        10%{?dist}
 Summary:        Fixed-row OHLC storage engine and service
 License:        Apache-2.0
 URL:            https://github.com/cy-chengyan/ohlc
@@ -193,6 +193,11 @@ getent passwd ohlc >/dev/null || \
 %{_libdir}/libohlc_jni.so
 
 %changelog
+* Sun Oct 11 2026 chengyan <chengyan.cy@gmail.com> - 0.1.0~beta.1-10
+- Use nullable 64-byte rows, int64 prices and uint64 volume/factor.
+- Add optional int32 reserved, eight validity bits and 8 KiB data tiles.
+- Update disk/protocol to 6 and C ABI to 4; old formats are unsupported.
+
 * Sun Oct 11 2026 OHLC contributors - 0.1.0~beta.1-9
 - Allow service-owned custom data directories with ProtectSystem=full.
 - Document data directory permissions and separate mount dependencies.

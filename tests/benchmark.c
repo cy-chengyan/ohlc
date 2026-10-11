@@ -27,15 +27,17 @@ static uint64_t nanoseconds(void) {
 }
 
 static ohlc_row make_value(uint32_t ticker, uint32_t time) {
-    ohlc_row row = {(int32_t)ticker, (int32_t)time, -(int32_t)ticker,
-                    -(int32_t)time,  ticker + time, UINT64_MAX - ticker - time,
-                    ticker ^ time};
+    ohlc_row row = {(int32_t)ticker,   (int32_t)time,
+                    -(int32_t)ticker,  -(int32_t)time,
+                    ticker + time,     UINT64_MAX - ticker - time,
+                    ticker ^ time,     0,
+                    OHLC_FIELDS_MARKET};
     return row;
 }
 
 static uint64_t value_sum(const ohlc_row* row) {
-    return (uint32_t)row->open + (uint64_t)(uint32_t)row->high + (uint32_t)row->low +
-           (uint32_t)row->close + row->volume + row->amount + row->adjust_factor;
+    return (uint64_t)row->open + (uint64_t)row->high + (uint64_t)row->low + (uint64_t)row->close +
+           row->volume + row->amount + row->adjust_factor + (uint64_t)row->reserved;
 }
 
 static uint32_t key_decode(const uint8_t* bytes) {

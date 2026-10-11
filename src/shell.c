@@ -378,21 +378,34 @@ static ohlc_status drop_table(shell* state, const shell_command* command) {
 }
 
 static void print_row(FILE* file, output_format format, uint32_t key, const ohlc_row* row) {
+    static const char* names[] = {"open",   "high",   "low",           "close",
+                                  "volume", "amount", "adjust_factor", "reserved"};
+    char values[8][32];
+    snprintf(values[0], sizeof(values[0]), "%" PRId64, row->open);
+    snprintf(values[1], sizeof(values[1]), "%" PRId64, row->high);
+    snprintf(values[2], sizeof(values[2]), "%" PRId64, row->low);
+    snprintf(values[3], sizeof(values[3]), "%" PRId64, row->close);
+    snprintf(values[4], sizeof(values[4]), "%" PRIu64, row->volume);
+    snprintf(values[5], sizeof(values[5]), "%" PRIu64, row->amount);
+    snprintf(values[6], sizeof(values[6]), "%" PRIu64, row->adjust_factor);
+    snprintf(values[7], sizeof(values[7]), "%" PRId32, row->reserved);
     if (format == SHELL_JSONL) {
-        fprintf(file,
-                "{\"key\":%" PRIu32 ",\"open\":%" PRId32 ",\"high\":%" PRId32 ",\"low\":%" PRId32
-                ",\"close\":%" PRId32 ",\"volume\":%" PRIu32 ",\"amount\":\"%" PRIu64
-                "\",\"adjust_factor\":%" PRIu32 "}\n",
-                key, row->open, row->high, row->low, row->close, row->volume, row->amount,
-                row->adjust_factor);
+        fprintf(file, "{\"key\":%" PRIu32, key);
+        for (size_t i = 0; i < 8; i++) {
+            if ((row->flags & (1u << i)) != 0) {
+                fprintf(file, ",\"%s\":\"%s\"", names[i], values[i]);
+            } else {
+                fprintf(file, ",\"%s\":null", names[i]);
+            }
+        }
+        fputs("}\n", file);
     } else {
         char separator = format == SHELL_CSV ? ',' : (format == SHELL_TABLE ? ' ' : '\t');
-        fprintf(file,
-                "%" PRIu32 "%c%" PRId32 "%c%" PRId32 "%c%" PRId32 "%c%" PRId32 "%c%" PRIu32
-                "%c%" PRIu64 "%c%" PRIu32 "\n",
-                key, separator, row->open, separator, row->high, separator, row->low, separator,
-                row->close, separator, row->volume, separator, row->amount, separator,
-                row->adjust_factor);
+        fprintf(file, "%" PRIu32, key);
+        for (size_t i = 0; i < 8; i++) {
+            fprintf(file, "%c%s", separator, (row->flags & (1u << i)) != 0 ? values[i] : "NULL");
+        }
+        fputc('\n', file);
     }
 }
 
@@ -536,10 +549,11 @@ static ohlc_status query(shell* state, const shell_command* command, bool series
                                "close",
                                "volume",
                                "amount",
-                               "adjust_factor"};
-        for (size_t i = 0; i < 8; i++) {
+                               "adjust_factor",
+                               "reserved"};
+        for (size_t i = 0; i < 9; i++) {
             fputs(names[i], file);
-            fputc(i == 7 ? '\n'
+            fputc(i == 8 ? '\n'
                          : (format == SHELL_CSV ? ',' : (format == SHELL_TABLE ? ' ' : '\t')),
                   file);
         }
@@ -622,11 +636,11 @@ static ohlc_status query(shell* state, const shell_command* command, bool series
 }
 
 static ohlc_status insert_row(shell* state, const shell_command* command) {
-    if (command->count != 11) {
+    if ((command->count != 11 && command->count != 12)) {
         return OHLC_INVALID;
     }
     ohlc_row row;
-    if (!ohlc_shell_row(command->words + 4, &row)) {
+    if (!ohlc_shell_row(command->words + 4, command->count - 4, &row)) {
         return OHLC_INVALID;
     }
     ohlc_table_info table;
@@ -698,6 +712,7 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
     uint64_t confirmed = 0;
     uint64_t batches = 0;
     uint64_t record_number = 0;
+    size_t column_count = 0;
     size_t pending = 0;
     size_t named_bytes = 4;
     bool eof = false;
@@ -710,14 +725,17 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
             break;
         }
         record_number++;
-        if (fields->count != 9) {
+        if ((fields->count != 9 && fields->count != 10) ||
+            (column_count != 0 && fields->count != column_count)) {
             status = OHLC_INVALID;
             break;
         }
         if (header) {
-            static const char* columns[] = {"ticker", "time",   "open",   "high",         "low",
-                                            "close",  "volume", "amount", "adjust_factor"};
-            for (size_t i = 0; i < 9; i++) {
+            column_count = fields->count;
+            static const char* columns[] = {"ticker",        "time",    "open",   "high",
+                                            "low",           "close",   "volume", "amount",
+                                            "adjust_factor", "reserved"};
+            for (size_t i = 0; i < fields->count; i++) {
                 if (fields->words[i].size != strlen(columns[i]) ||
                     memcmp(fields->words[i].text, columns[i], strlen(columns[i])) != 0) {
                     status = OHLC_INVALID;
@@ -729,7 +747,7 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
         }
         uint32_t key;
         ohlc_row row;
-        if (!ohlc_shell_row(fields->words + 2, &row)) {
+        if (!ohlc_shell_row(fields->words + 2, fields->count - 2, &row)) {
             status = OHLC_INVALID;
             break;
         }
@@ -1011,8 +1029,9 @@ static ohlc_status execute(shell* state, const shell_command* command) {
         ohlc_status status = open_table(state, word + 1, &table);
         if (status == OHLC_OK) {
             print_definition(&table);
-            puts("0 open int32\n1 high int32\n2 low int32\n3 close int32\n4 volume uint32\n5 "
-                 "amount uint64\n6 adjust_factor uint32");
+            puts("0 open int64\n1 high int64\n2 low int64\n3 close int64\n4 volume uint64\n5 "
+                 "amount uint64\n6 adjust_factor uint64\n7 reserved int32 (default NULL)\n"
+                 "All eight fields are nullable.");
         }
         return status;
     }

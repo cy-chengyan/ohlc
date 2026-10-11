@@ -67,7 +67,7 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     if (options->memory_limit < 1024u * 1024u || options->cache_bytes > options->memory_limit / 2 ||
         options->max_tables == 0 || options->max_tables > 1048576 || options->max_cursors == 0 ||
         options->max_query_ms == 0 || options->read_workers > OHLC_IO_WORKERS ||
-        options->data_volume_bytes < 17u * OHLC_BLOCK_BYTES ||
+        options->data_volume_bytes < OHLC_PAGE_BYTES + 16u * OHLC_BLOCK_BYTES ||
         options->data_volume_bytes > INT64_MAX || options->wal_segment_bytes < OHLC_FRAME_LIMIT ||
         options->wal_segment_bytes > INT64_MAX) {
         return OHLC_INVALID;
@@ -606,6 +606,11 @@ ohlc_status ohlc_prepare_write(ohlc_db* db, const ohlc_root* source, uint32_t ta
     *output = NULL;
     if (ohlc_root_table(source, table_id) == NULL) {
         return OHLC_NOT_FOUND;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (!ohlc_row_valid(rows + i * OHLC_WRITE_BYTES + 8)) {
+            return OHLC_INVALID;
+        }
     }
     ohlc_prepared_row* plan = NULL;
     ohlc_root* candidate = ohlc_root_copy(db, source);

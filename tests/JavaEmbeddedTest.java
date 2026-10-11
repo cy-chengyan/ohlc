@@ -16,18 +16,20 @@ public final class JavaEmbeddedTest {
 
     private static void checkRow(ByteBuffer row, long key) {
         assert Ohlc.u32(row) == key;
-        assert row.getInt() == Integer.MIN_VALUE;
-        assert row.getInt() == Integer.MAX_VALUE;
-        assert row.getInt() == -1;
-        assert row.getInt() == 0;
-        assert Ohlc.u32(row) == 0xffffffffL;
+        assert row.getLong() == Long.MIN_VALUE;
+        assert row.getLong() == Long.MAX_VALUE;
+        assert row.getLong() == -1;
+        assert row.getLong() == 0;
+        assert row.getLong() == -1L;
         assert Long.toUnsignedString(row.getLong()).equals("18446744073709551615");
-        assert Ohlc.u32(row) == 0xffffffffL;
+        assert row.getLong() == -1L;
+        assert row.getInt() == Integer.MIN_VALUE;
+        assert row.getInt() == 255;
     }
 
     private static void put(ByteBuffer rows, long ticker, long key) {
-        Ohlc.putWrite(rows, ticker, key, Integer.MIN_VALUE, Integer.MAX_VALUE, -1, 0,
-                      0xffffffffL, -1L, 0xffffffffL);
+        Ohlc.putWrite(rows, ticker, key, Long.MIN_VALUE, Long.MAX_VALUE, -1, 0,
+                      -1L, -1L, -1L, Integer.MIN_VALUE);
     }
 
     private static void closeRace(Database db, Database.Table table, long key) throws Exception {
@@ -68,6 +70,43 @@ public final class JavaEmbeddedTest {
         } finally {
             threads.shutdownNow();
         }
+    }
+
+    private static void nullableRows(Database db) throws Exception {
+        Database.Table table = db.create("java_nullable", 1, true, "", "");
+        for (int mask = 0; mask < 256; mask++) {
+            Ohlc.Row value = new Ohlc.Row((mask & 1) == 0 ? null : Long.MIN_VALUE,
+                    (mask & 2) == 0 ? null : Long.MAX_VALUE,
+                    (mask & 4) == 0 ? null : -1L, (mask & 8) == 0 ? null : 0L,
+                    (mask & 16) == 0 ? null : -1L, (mask & 32) == 0 ? null : -1L,
+                    (mask & 64) == 0 ? null : -1L,
+                    (mask & 128) == 0 ? null : Integer.MIN_VALUE);
+            table.insert("NULLABLE", "@" + mask, value);
+            try (Database.Query query = table.cross(mask)) {
+                Database.Chunk chunk = query.next();
+                assert chunk.count() == 1;
+                ByteBuffer data = chunk.data();
+                assert Ohlc.u32(data) == 0;
+                assert Ohlc.getRow(data).equals(value);
+                assert !data.hasRemaining();
+                assert query.next() == null;
+            }
+        }
+        table.insert("NULLABLE", "@256", 0, 0, 0, 0, 0, 0, 0, 0);
+        try (Database.Query query = table.cross(256)) {
+            ByteBuffer data = query.next().data();
+            Ohlc.u32(data);
+            assert Ohlc.getRow(data).reserved().equals(0);
+            assert query.next() == null;
+        }
+        table.insert("NULLABLE", "@256", 0, 0, 0, 0, 0, 0, 0);
+        try (Database.Query query = table.cross(256)) {
+            ByteBuffer data = query.next().data();
+            Ohlc.u32(data);
+            assert Ohlc.getRow(data).reserved() == null;
+            assert query.next() == null;
+        }
+        db.drop("java_nullable");
     }
 
     private static void extendedPeriods(Database db) throws Exception {
@@ -152,6 +191,7 @@ public final class JavaEmbeddedTest {
             assert minute.description.equals("UTF-8 \ud83d\udcc8");
             assert db.tables(1, 128).size() == 2;
             extendedPeriods(db);
+            nullableRows(db);
             Database.Table removed = db.create("java_drop", 1, true, "", "");
             db.drop("java_drop");
             Database.Table replacement = db.create("java_drop", 1, true, "", "");
@@ -194,7 +234,7 @@ public final class JavaEmbeddedTest {
             long date = day.timeKey("20260901");
             assert day.timeKey(day.formatTime(0xffffffffL)) == 0xffffffffL;
             // Heap and sliced direct inputs preserve position and uint64 bits.
-            ByteBuffer heap = ByteBuffer.allocate(43).order(ByteOrder.LITTLE_ENDIAN);
+            ByteBuffer heap = ByteBuffer.allocate(Ohlc.WRITE_BYTES + 3).order(ByteOrder.LITTLE_ENDIAN);
             heap.position(3);
             put(heap, ticker, date);
             heap.flip().position(3);
@@ -202,7 +242,7 @@ public final class JavaEmbeddedTest {
                       heap.asReadOnlyBuffer());
             assert day.resolve("JAVA") == ticker;
             assert heap.position() == 3;
-            ByteBuffer direct = Database.buffer(128);
+            ByteBuffer direct = Database.buffer(2 * Ohlc.WRITE_BYTES + 4);
             direct.position(4);
             ByteBuffer slice = direct.slice().order(ByteOrder.LITTLE_ENDIAN);
             put(slice, ticker, date + 1);
@@ -217,7 +257,7 @@ public final class JavaEmbeddedTest {
             day.write(heap);
             long sequence = db.stats().commitSequence();
             try {
-                ByteBuffer duplicate = Database.buffer(80);
+                ByteBuffer duplicate = Database.buffer(2 * Ohlc.WRITE_BYTES);
                 put(duplicate, ticker, date);
                 put(duplicate, ticker, date);
                 day.write(duplicate.flip());

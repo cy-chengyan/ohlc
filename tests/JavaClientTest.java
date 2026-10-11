@@ -7,6 +7,52 @@ import java.nio.charset.StandardCharsets;
 public final class JavaClientTest {
     private JavaClientTest() {}
 
+    private static void nullableRows(Ohlc client) throws Exception {
+        Ohlc.Table table = client.create("java_nullable", 1, true, "", "");
+        for (int mask = 0; mask < 256; mask++) {
+            Ohlc.Row value = new Ohlc.Row((mask & 1) == 0 ? null : Long.MIN_VALUE,
+                    (mask & 2) == 0 ? null : Long.MAX_VALUE,
+                    (mask & 4) == 0 ? null : -1L, (mask & 8) == 0 ? null : 0L,
+                    (mask & 16) == 0 ? null : -1L, (mask & 32) == 0 ? null : -1L,
+                    (mask & 64) == 0 ? null : -1L,
+                    (mask & 128) == 0 ? null : Integer.MIN_VALUE);
+            table.insert("NULLABLE", "@" + mask, value);
+            try (Ohlc.Query query = table.cross(mask)) {
+                Ohlc.Chunk chunk = query.next();
+                assert chunk.count() == 1;
+                ByteBuffer data = chunk.data();
+                assert Ohlc.u32(data) == 0;
+                assert Ohlc.getRow(data).equals(value);
+                assert !data.hasRemaining();
+                Ohlc.Chunk tail;
+                while ((tail = query.next()) != null) {
+                    assert tail.count() == 0 && tail.last();
+                }
+            }
+        }
+        table.insert("NULLABLE", "@256", 0, 0, 0, 0, 0, 0, 0, 0);
+        try (Ohlc.Query query = table.cross(256)) {
+            ByteBuffer data = query.next().data();
+            Ohlc.u32(data);
+            assert Ohlc.getRow(data).reserved().equals(0);
+            Ohlc.Chunk tail;
+            while ((tail = query.next()) != null) {
+                assert tail.count() == 0 && tail.last();
+            }
+        }
+        table.insert("NULLABLE", "@256", 0, 0, 0, 0, 0, 0, 0);
+        try (Ohlc.Query query = table.cross(256)) {
+            ByteBuffer data = query.next().data();
+            Ohlc.u32(data);
+            assert Ohlc.getRow(data).reserved() == null;
+            Ohlc.Chunk tail;
+            while ((tail = query.next()) != null) {
+                assert tail.count() == 0 && tail.last();
+            }
+        }
+        client.drop("java_nullable");
+    }
+
     private static void extendedPeriods(Ohlc client) throws Exception {
         Ohlc.PeriodUnit[] units = {Ohlc.PeriodUnit.SECOND, Ohlc.PeriodUnit.MONTH,
                                    Ohlc.PeriodUnit.YEAR};
@@ -89,6 +135,7 @@ public final class JavaClientTest {
             assert day.timeKey(day.formatTime(0xffffffffL)) == 0xffffffffL;
             assert client.tables(1, 128).size() == 2;
             extendedPeriods(client);
+            nullableRows(client);
             Ohlc.Table removed = client.create("java_drop", 1, true, "", "");
             client.drop("java_drop");
             Ohlc.Table replacement = client.create("java_drop", 1, true, "", "");
@@ -103,13 +150,15 @@ public final class JavaClientTest {
                     ByteBuffer rows = chunk.data();
                     while (rows.hasRemaining()) {
                         assert Ohlc.u32(rows) == key + count * 3;
-                        assert rows.getInt() == Integer.MIN_VALUE;
-                        assert rows.getInt() == Integer.MAX_VALUE;
-                        assert rows.getInt() == -1;
-                        assert rows.getInt() == 0;
-                        assert Ohlc.u32(rows) == 0xffffffffL;
+                        assert rows.getLong() == Long.MIN_VALUE;
+                        assert rows.getLong() == Long.MAX_VALUE;
+                        assert rows.getLong() == -1;
+                        assert rows.getLong() == 0;
+                        assert rows.getLong() == -1L;
                         assert Long.toUnsignedString(rows.getLong()).equals("18446744073709551615");
-                        assert Ohlc.u32(rows) == 0;
+                        assert rows.getLong() == 0;
+                        assert rows.getInt() == Integer.MIN_VALUE;
+                        assert rows.getInt() == 255;
                         count++;
                     }
                 }
@@ -125,15 +174,15 @@ public final class JavaClientTest {
             }
             Ohlc.Table java = client.create("java_day", 5, true, "", "Java contract check");
             long code = 0;
-            ByteBuffer records = Ohlc.buffer(40);
-            Ohlc.putWrite(records, code, java.timeKey("20260901"), Integer.MIN_VALUE,
-                          Integer.MAX_VALUE, 0, -1, 0xffffffffL, -1L, 0xffffffffL);
+            ByteBuffer records = Ohlc.buffer(Ohlc.WRITE_BYTES);
+            Ohlc.putWrite(records, code, java.timeKey("20260901"), Long.MIN_VALUE,
+                          Long.MAX_VALUE, 0, -1, -1L, -1L, -1L, Integer.MAX_VALUE);
             java.write(new byte[][] {"JAVA".getBytes(StandardCharsets.UTF_8)}, records.flip());
             assert java.resolve("JAVA") == code;
             try (Ohlc.Query query = java.cross("20260901")) {
                 Ohlc.Chunk chunk = query.next();
                 assert chunk.count() == 1;
-                assert chunk.data().getLong(24) == -1L;
+                assert chunk.data().getLong(44) == -1L;
                 while (query.next() != null) {
                     // Consume successful FINAL before releasing the connection.
                 }

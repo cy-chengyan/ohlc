@@ -15,6 +15,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "python"))
 from ohlc import Connection, Error
 from series_contract import check_closed_series
+from nullable_contract import check_nullable
 
 
 def require_error(code, operation):
@@ -42,7 +43,7 @@ def connect_when_ready(process, **options):
 
 def check_shell_queries(execute, options):
     """Check inclusive shell bounds and server-side ticker-set parsing."""
-    assert " protocol=5 " in execute("ping; status;").stderr
+    assert " protocol=6 " in execute("ping; status;").stderr
     values = (1, 2, 0, 1, 3, 4, 1000000)
     with Connection(**options) as client:
         minute = client.create("shell_range", period="3m", timezone="Asia/Shanghai")
@@ -155,7 +156,7 @@ def check_cross_filter_frames(socket_path, token):
                     (6, struct.pack("<III", 1, 0, 0), 0),
                     (2, b"", 0)]
         for request_id, (opcode, body, expected) in enumerate(requests, 1):
-            peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 5, opcode, 0, len(body), request_id, 0, 0) + body)
+            peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 6, opcode, 0, len(body), request_id, 0, 0) + body)
             header = struct.unpack("<4sHHIIQII", receive_exact(peer, 32))
             assert header[2] == opcode and header[3] == 3 and header[5] == request_id
             assert header[6] == expected, header
@@ -193,11 +194,11 @@ def main():
                 assert [table.name for table in client.tables()] == ["bars_3m", "bars_5d"]
                 key = minute.time_key("20260901 09:30:00")
                 assert minute.time_key("2026-09-01T01:30:00Z") == key
-                row = (-2147483648, 2147483647, -1, 0, 4294967295, 18446744073709551615, 0)
+                row = (-(1 << 63), (1 << 63) - 1, -1, 0, (1 << 64) - 1, (1 << 64) - 1, 0, -(1 << 31))
                 count = 17000
                 encoded = bytearray()
                 for index in range(count):
-                    encoded.extend(struct.pack("<IIiiiiIQI", code, key + index * 3, *row))
+                    encoded.extend(struct.pack("<IIqqqqQQQiI", code, key + index * 3, *row, 255))
                 sequence = minute.write_encoded(encoded)
                 minute.insert(b"00\0\xff\n", key, (0,) * 7)
                 day.insert("AAPL", "20260901", row)
@@ -217,10 +218,10 @@ def main():
                 assert received == [(key + i * 3, *row) for i in range(count)]
                 with minute.cross(key) as query:
                     rows = [result for chunk in query for result in chunk.rows()]
-                assert rows == [(code, *row), (binary, *((0,) * 7))]
+                assert rows == [(code, *row), (binary, *((0,) * 7), None)]
                 with day.series("AAPL", "20260901", "20260901") as query:
                     assert sum(chunk.count for chunk in query) == 1
-                require_error(1, lambda: minute.write_encoded(encoded[:40] * 2))
+                require_error(1, lambda: minute.write_encoded(encoded[:72] * 2))
                 with minute.cross(key - 1) as query:
                     assert sum(chunk.count for chunk in query) == 0
             if len(sys.argv) > 3:
@@ -230,8 +231,8 @@ def main():
                 with Connection(**options) as client:
                     with client.table("java_day").cross("20260901") as query:
                         result = [row for chunk in query for row in chunk.rows()]
-                    assert result[0][1:] == (-2147483648, 2147483647, 0, -1, 4294967295,
-                                              18446744073709551615, 4294967295)
+                    assert result[0][1:] == (-(1 << 63), (1 << 63) - 1, 0, -1, (1 << 64) - 1,
+                                              (1 << 64) - 1, (1 << 64) - 1, (1 << 31) - 1)
             shell = str(Path(server).with_name("ohlc"))
             shell_arguments = [shell, "--socket", socket_path, "--token-file", str(token)]
             def execute(command, expected=0):
@@ -239,6 +240,9 @@ def main():
                                         capture_output=True, text=True, timeout=30)
                 assert result.returncode == expected, (result.returncode, result.stdout, result.stderr)
                 return result
+            with Connection(**options) as client:
+                check_nullable(client.create("nullable", period="1d"))
+                client.drop("nullable")
             check_shell_queries(execute, options)
             check_extended_periods(execute, options)
             check_cross_filter_frames(socket_path, b"test-writer")
@@ -263,6 +267,33 @@ def main():
             assert "2026-09-01T09:30:00+08:00" in formatted.stdout
             execute('cross bars_3m "unterminated', 2)
             execute('insert bars_5d SHELL "20260901" -2147483648 2147483647 0 -1 4294967295 18446744073709551615 4294967295;')
+            execute("create shell_nullable --period 1d;")
+            execute("insert shell_nullable N @0 -9223372036854775808 9223372036854775807 "
+                    "NULL 0 18446744073709551615 null 18446744073709551615 -2147483648;")
+            actual = json.loads(execute("cross shell_nullable @0 --format jsonl;").stdout)
+            assert actual == dict(key=0, open="-9223372036854775808", high="9223372036854775807",
+                                  low=None, close="0", volume="18446744073709551615",
+                                  amount=None, adjust_factor="18446744073709551615",
+                                  reserved="-2147483648")
+            execute("insert shell_nullable N @0 NULL NULL NULL NULL NULL NULL NULL;")
+            assert all(value is None for field, value in
+                       json.loads(execute("cross shell_nullable @0 --format jsonl;").stdout).items()
+                       if field != "key")
+            assert execute("cross shell_nullable @1 --format jsonl;").stdout == ""
+            for value in ("2147483648", "-2147483649"):
+                execute(f"insert shell_nullable REJECTED @0 0 0 0 0 0 0 0 {value};", 1)
+            for value in ("9223372036854775808", "-9223372036854775809"):
+                execute(f"insert shell_nullable REJECTED @0 {value} 0 0 0 0 0 0;", 1)
+            nullable_csv = root / "nullable.csv"
+            nullable_csv.write_text("ticker,time,open,high,low,close,volume,amount,adjust_factor,reserved\n"
+                                    "N,@2,,NULL,0,-1,18446744073709551615,0,null,0\n")
+            execute(f'import shell_nullable "{nullable_csv}" --format csv;')
+            actual = json.loads(execute("cross shell_nullable @2 --format jsonl;").stdout)
+            assert actual["open"] is None and actual["high"] is None
+            assert actual["reserved"] == "0" and actual["adjust_factor"] is None
+            assert "NULL,NULL,0,-1,18446744073709551615,0,NULL,0" in execute(
+                "cross shell_nullable @2 --format csv;").stdout
+            execute("drop shell_nullable;")
             output = root / "result.jsonl"
             execute(f'cross bars_5d "20260901" --format jsonl --output "{output}";')
             assert '"amount":"18446744073709551615"' in output.read_text()
@@ -281,7 +312,7 @@ def main():
                 require_error(2, lambda: client.resolve(1, "MUST_NOT_RUN"))
                 with client.table("bars_5d").cross("20260902") as query:
                     result = [row for chunk in query for row in chunk.rows()]
-                assert len(result) == 1 and result[0][1:] == (1, 2, 3, 4, 5, 6, 7)
+                assert len(result) == 1 and result[0][1:] == (1, 2, 3, 4, 5, 6, 7, None)
             require_error(8, lambda: Connection(socket=socket_path, token=b"wrong", library=library))
             with Connection(socket=socket_path, token=b"test-reader", library=library) as reader:
                 reader.ping()
@@ -295,13 +326,13 @@ def main():
             with socket.socket(socket.AF_UNIX) as peer:
                 peer.settimeout(5)
                 peer.connect(socket_path)
-                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 5, 1, 0, 0xffffffff, 1, 0, 0))
+                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 6, 1, 0, 0xffffffff, 1, 0, 0))
                 assert peer.recv(1) == b""
             # Protocol 4 used an exclusive end and must not be silently accepted.
             with socket.socket(socket.AF_UNIX) as peer:
                 peer.settimeout(5)
                 peer.connect(socket_path)
-                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 4, 1, 0, 0, 1, 0, 0))
+                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 5, 1, 0, 0, 1, 0, 0))
                 assert peer.recv(1) == b""
         finally:
             process.send_signal(signal.SIGTERM)

@@ -100,7 +100,7 @@ def _check_abi(lib):
         raise RuntimeError("The native library predates the supported ohlc ABI") from error
     version.argtypes = []
     version.restype = C.c_uint32
-    if version() != 3:
+    if version() != 4:
         raise RuntimeError("Incompatible ohlc native ABI; install matching libraries and bindings")
 
 
@@ -415,7 +415,7 @@ class Table:
             self.connection._require_open()
             self.connection._check(self.connection._lib.ohlc_client_write_named(
                 self.connection._handle, self.id, names, len(names), storage,
-                len(encoded) // 40, C.byref(sequence)))
+                len(encoded) // 72, C.byref(sequence)))
         return sequence.value
 
     def time_key(self, value):
@@ -437,22 +437,24 @@ class Table:
     def write_encoded(self, buffer):
         """Commit a contiguous buffer of little-endian (code, time, row) records."""
         view = memoryview(buffer).cast("B")
-        if not view or len(view) % 40 or len(view) // 40 > self.connection.max_write_rows:
-            raise ValueError("Expected 1..max_write_rows complete 40-byte records")
+        if not view or len(view) % 72 or len(view) // 72 > self.connection.max_write_rows:
+            raise ValueError("Expected 1..max_write_rows complete 72-byte records")
         storage = ((C.c_ubyte * len(view)).from_buffer_copy(view) if view.readonly
                    else (C.c_ubyte * len(view)).from_buffer(view))
         sequence = C.c_uint64()
         with self.connection._lock:
             self.connection._require_open()
             self.connection._check(self.connection._lib.ohlc_client_write(
-                self.connection._handle, self.id, storage, len(view) // 40, C.byref(sequence)))
+                self.connection._handle, self.id, storage, len(view) // 72, C.byref(sequence)))
         return sequence.value
 
     def write(self, rows):
-        """Commit one batch of (ticker, date_or_datetime, seven_integer_values).
+        """Commit one batch of (ticker, date_or_datetime, seven_or_eight_values).
 
         Missing names are created atomically with the rows. A rejected batch
-        creates no names. The method never splits a transaction.
+        creates no names. The method never splits a transaction. The optional
+        eighth value, reserved (int32), defaults to None on every write. All fields
+        accept None; integer zero remains a present value.
         """
         encoded = bytearray()
         names = {}
@@ -462,18 +464,25 @@ class Table:
             if ticker not in names:
                 names[ticker] = len(names)
                 named_size += 4 + len(ticker)
-            if named_size + len(encoded) + 40 > (16 << 20) - 104:
+            if named_size + len(encoded) + 72 > (16 << 20) - 104:
                 raise ValueError("Named batch exceeds frame limit")
-            if len(encoded) // 40 >= self.connection.max_write_rows:
+            if len(encoded) // 72 >= self.connection.max_write_rows:
                 raise ValueError("Batch exceeds max_write_rows")
-            if len(values) != 7:
-                raise ValueError("Expected open high low close volume amount adjust_factor")
-            for value in values:
-                if not isinstance(value, int) or isinstance(value, bool):
-                    raise ValueError("All seven fields must be integers")
+            if len(values) not in (7, 8):
+                raise ValueError("Expected open high low close volume amount adjust_factor [reserved]")
+            if len(values) == 7:
+                values = (*values, None)
+            flags = 0
+            encoded_values = []
+            for index, value in enumerate(values):
+                if value is not None:
+                    if not isinstance(value, int) or isinstance(value, bool):
+                        raise ValueError("All fields must be integers or None")
+                    flags |= 1 << index
+                encoded_values.append(0 if value is None else value)
             try:
-                encoded.extend(struct.pack("<IIiiiiIQI", names[ticker],
-                                           self.time_key(time), *values))
+                encoded.extend(struct.pack("<IIqqqqQQQiI", names[ticker],
+                                           self.time_key(time), *encoded_values, flags))
             except struct.error as error:
                 raise ValueError(str(error)) from error
         if not encoded:
@@ -510,7 +519,16 @@ class Chunk:
     final: bool
 
     def rows(self):
-        return struct.iter_unpack("<IiiiiIQI", self.data)
+        """Yield (key, open, high, low, close, volume, amount, factor, reserved).
+
+        NULL fields are returned as None. Raw data retains the encoded flags.
+        """
+        for key, *values, flags in struct.iter_unpack("<IqqqqQQQiI", self.data):
+            if flags & ~0xff or any(value != 0 and not flags & (1 << index)
+                                   for index, value in enumerate(values)):
+                raise Error(6, "Noncanonical row encoding")
+            yield (key, *(value if flags & (1 << index) else None
+                          for index, value in enumerate(values)))
 
 
 class _Query:

@@ -90,7 +90,7 @@ def main():
                 assert client.uuid == uuid
                 with client.table("daily").cross("20260901") as query:
                     rows = [row for chunk in query for row in chunk.rows()]
-                assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+                assert rows == [(0, 1, 2, 3, 4, 5, 6, 7, None)]
         finally:
             process.send_signal(signal.SIGTERM)
             _, errors = process.communicate(timeout=20)

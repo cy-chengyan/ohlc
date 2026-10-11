@@ -92,13 +92,14 @@ def model(configuration):
     tail_tiles = occupied_tiles(lives, boundary, times)
     final_groups = {stock // 16 for stock, (birth, end) in enumerate(lives)
                     if birth <= times - 1 < end}
-    return {"records": records, "tail_records": tail_records, "tickers": len(lives),
+    return {"row_bytes": 64, "block_bytes": 8192, "records": records,
+            "tail_records": tail_records, "tickers": len(lives),
             "final_active": sum(end == times for _, end in lives),
             "final_active_groups": len(final_groups), "current_tiles": current_tiles,
-            "tail_tiles": tail_tiles, "current_data_bytes": current_tiles * 4096,
-            "tail_data_bytes": tail_tiles * 4096,
-            "current_payload_fill": records * 32 / (current_tiles * 4096),
-            "tail_payload_fill": tail_records * 32 / (tail_tiles * 4096)}
+            "tail_tiles": tail_tiles, "current_data_bytes": current_tiles * 8192,
+            "tail_data_bytes": tail_tiles * 8192,
+            "current_payload_fill": records * 64 / (current_tiles * 8192),
+            "tail_payload_fill": tail_records * 64 / (tail_tiles * 8192)}
 
 
 def save_fixture(directory, configuration):

@@ -143,8 +143,10 @@ const shell_help ohlc_shell_commands[] = {
     {.name = "insert",
      .group = SHELL_HELP_WRITES,
      .summary = "Insert or replace one complete bar.",
-     .syntax = "insert TABLE TICKER TIME OPEN HIGH LOW CLOSE VOLUME AMOUNT ADJUST_FACTOR;",
-     .description = "Atomically insert/replace all seven fields. Table must exist; missing tickers "
+     .syntax =
+         "insert TABLE TICKER TIME OPEN HIGH LOW CLOSE VOLUME AMOUNT ADJUST_FACTOR [RESERVED];",
+     .description = "Atomically insert/replace all eight fields (reserved defaults to NULL). Table "
+                    "must exist; missing tickers "
                     "are created "
                     "atomically; write access "
                     "required.",
@@ -166,14 +168,14 @@ const shell_help ohlc_shell_commands[] = {
     {.name = "put",
      .group = SHELL_HELP_WRITES,
      .summary = "Alias of insert.",
-     .syntax = "put TABLE TICKER TIME OPEN HIGH LOW CLOSE VOLUME AMOUNT ADJUST_FACTOR;",
+     .syntax = "put TABLE TICKER TIME OPEN HIGH LOW CLOSE VOLUME AMOUNT ADJUST_FACTOR [RESERVED];",
      .description = "Alias of insert.",
      .example = "help insert;"},
     {.name = "import",
      .group = SHELL_HELP_WRITES,
      .summary = "Import bars from a local TSV or CSV file.",
      .syntax = "import TABLE PATH [--format tsv|csv] [--batch-rows N] [--no-header];",
-     .description = "Read a local text file with a matching nine-column header.\n"
+     .description = "Read a local text file with a matching nine- or ten-column header.\n"
                     "Default: TSV, 20000 rows per batch. Write access required.\n"
                     "Missing securities are created atomically with each batch.\n"
                     "Stop on the first error; earlier committed batches remain durable.",
@@ -428,16 +430,21 @@ static void help_times(size_t width) {
 static void help_fields(bool importing, size_t width) {
     puts(importing ? "\nColumns (in order)" : "\nFields (in order)");
     if (importing) {
-        help_text("ticker, time, open, high, low, close, volume, amount, adjust_factor", width,
-                  false);
+        help_text("ticker, time, open, high, low, close, volume, amount, adjust_factor[, reserved]",
+                  width, false);
     } else {
-        help_text("open, high, low, close, volume, amount, adjust_factor", width, false);
+        help_text("open, high, low, close, volume, amount, adjust_factor[, reserved]", width,
+                  false);
     }
     puts("\nInteger types");
-    help_pair("Prices", "open, high, low, close: int32.", 12, width);
-    help_pair("Volume", "uint32.", 12, width);
+    help_pair("NULL", "All fields accept NULL or null; empty import fields also mean NULL.", 12,
+              width);
+    help_pair("Prices", "open, high, low, close: int64.", 12, width);
+    help_pair("Volume", "uint64.", 12, width);
     help_pair("Amount", "uint64.", 12, width);
-    help_pair("Factor", "adjust_factor: uint32.", 12, width);
+    help_pair("Reserved", "Optional int32; omitted values default to NULL on every write.", 12,
+              width);
+    help_pair("Factor", "adjust_factor: uint64.", 12, width);
 }
 
 static void help_detail(const shell_help* entry, size_t width) {

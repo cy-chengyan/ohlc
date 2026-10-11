@@ -63,10 +63,11 @@ static uint32_t dimension(const char* text, uint32_t maximum) {
 }
 
 static ohlc_row value_for(uint32_t ticker, uint32_t time) {
-    return (ohlc_row){(int32_t)ticker,  (int32_t)time,
-                      -(int32_t)ticker, -(int32_t)time,
-                      ticker + time,    UINT64_MAX - (uint64_t)ticker * 10000019u - time,
-                      ticker ^ time};
+    return (ohlc_row){(int32_t)ticker,   (int32_t)time,
+                      -(int32_t)ticker,  -(int32_t)time,
+                      ticker + time,     UINT64_MAX - (uint64_t)ticker * 10000019u - time,
+                      ticker ^ time,     0,
+                      OHLC_FIELDS_MARKET};
 }
 
 static uint64_t consume(const uint8_t* records, size_t count, uint32_t stock, uint32_t start,
@@ -86,7 +87,8 @@ static uint64_t consume(const uint8_t* records, size_t count, uint32_t stock, ui
         if (ohlc_get_u32(encoded) != expected_key || actual.open != expected.open ||
             actual.high != expected.high || actual.low != expected.low ||
             actual.close != expected.close || actual.volume != expected.volume ||
-            actual.amount != expected.amount || actual.adjust_factor != expected.adjust_factor) {
+            actual.amount != expected.amount || actual.adjust_factor != expected.adjust_factor ||
+            actual.reserved != expected.reserved || actual.flags != expected.flags) {
             fprintf(stderr, "Query mismatch at row %zu\n", already + i);
             exit(1);
         }

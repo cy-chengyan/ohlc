@@ -19,9 +19,13 @@
 #endif
 
 _Static_assert(CHAR_BIT == 8, "The file format requires eight-bit bytes");
-_Static_assert(INT32_MIN == (-2147483647 - 1), "Two's complement int32_t is required");
+_Static_assert(INT32_MIN == (-INT32_MAX - 1), "Two's complement int32_t is required");
+_Static_assert(INT64_MIN == (-INT64_MAX - 1), "Two's complement int64_t is required");
+_Static_assert(128u * OHLC_ROW_BYTES == OHLC_BLOCK_BYTES, "Tiles must contain 128 rows");
 _Static_assert(sizeof(ohlc_group) == 16, "Group entries must occupy sixteen bytes");
 _Static_assert(sizeof(ohlc_time_node) == 4096, "Time nodes must occupy four KiB");
+_Static_assert(OHLC_MAX_BATCH_ROWS* OHLC_WRITE_BYTES + 104u <= OHLC_FRAME_LIMIT,
+               "A maximum plain batch must fit in a frame");
 _Static_assert(sizeof(off_t) >= 8, "Large file offsets are required");
 
 typedef union {
@@ -70,30 +74,49 @@ void ohlc_put_u64(uint8_t* p, uint64_t value) {
 }
 
 void ohlc_row_encode(uint8_t output[OHLC_ROW_BYTES], const ohlc_row* row) {
-    ohlc_put_u32(output, (uint32_t)row->open);
-    ohlc_put_u32(output + 4, (uint32_t)row->high);
-    ohlc_put_u32(output + 8, (uint32_t)row->low);
-    ohlc_put_u32(output + 12, (uint32_t)row->close);
-    ohlc_put_u32(output + 16, row->volume);
-    ohlc_put_u64(output + 20, row->amount);
-    ohlc_put_u32(output + 28, row->adjust_factor);
+    ohlc_put_u64(output, (row->flags & (1u << 0)) != 0 ? (uint64_t)row->open : 0);
+    ohlc_put_u64(output + 8, (row->flags & (1u << 1)) != 0 ? (uint64_t)row->high : 0);
+    ohlc_put_u64(output + 16, (row->flags & (1u << 2)) != 0 ? (uint64_t)row->low : 0);
+    ohlc_put_u64(output + 24, (row->flags & (1u << 3)) != 0 ? (uint64_t)row->close : 0);
+    ohlc_put_u64(output + 32, (row->flags & (1u << 4)) != 0 ? row->volume : 0);
+    ohlc_put_u64(output + 40, (row->flags & (1u << 5)) != 0 ? row->amount : 0);
+    ohlc_put_u64(output + 48, (row->flags & (1u << 6)) != 0 ? row->adjust_factor : 0);
+    ohlc_put_u32(output + 56,
+                 (row->flags & OHLC_FIELD_RESERVED) != 0 ? (uint32_t)row->reserved : 0);
+    ohlc_put_u32(output + 60, row->flags & OHLC_FIELDS_ALL);
 }
 
-static int32_t decode_signed(const uint8_t* p) {
-    uint32_t bits = ohlc_get_u32(p);
-    int32_t value;
+static int64_t decode_signed(const uint8_t* p) {
+    uint64_t bits = ohlc_get_u64(p);
+    int64_t value;
     memcpy(&value, &bits, sizeof(value));
     return value;
 }
 
 void ohlc_row_decode(const uint8_t input[OHLC_ROW_BYTES], ohlc_row* row) {
     row->open = decode_signed(input);
-    row->high = decode_signed(input + 4);
-    row->low = decode_signed(input + 8);
-    row->close = decode_signed(input + 12);
-    row->volume = ohlc_get_u32(input + 16);
-    row->amount = ohlc_get_u64(input + 20);
-    row->adjust_factor = ohlc_get_u32(input + 28);
+    row->high = decode_signed(input + 8);
+    row->low = decode_signed(input + 16);
+    row->close = decode_signed(input + 24);
+    row->volume = ohlc_get_u64(input + 32);
+    row->amount = ohlc_get_u64(input + 40);
+    row->adjust_factor = ohlc_get_u64(input + 48);
+    uint32_t bits = ohlc_get_u32(input + 56);
+    memcpy(&row->reserved, &bits, sizeof(bits));
+    row->flags = ohlc_get_u32(input + 60);
+}
+
+bool ohlc_row_valid(const uint8_t input[OHLC_ROW_BYTES]) {
+    uint32_t flags = ohlc_get_u32(input + 60);
+    if ((flags & ~OHLC_FIELDS_ALL) != 0) {
+        return false;
+    }
+    for (unsigned int field = 0; field < 7; field++) {
+        if ((flags & (1u << field)) == 0 && ohlc_get_u64(input + field * 8u) != 0) {
+            return false;
+        }
+    }
+    return (flags & OHLC_FIELD_RESERVED) != 0 || ohlc_get_u32(input + 56) == 0;
 }
 
 void ohlc_write_encode(uint8_t output[OHLC_WRITE_BYTES], uint32_t ticker_code, uint32_t time_key,

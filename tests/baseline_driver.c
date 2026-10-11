@@ -111,6 +111,7 @@ static ohlc_row value_for(uint32_t stock, uint32_t minute) {
         .volume = volume,
         .amount = (uint64_t)(uint32_t)((open + close) / 2) * volume,
         .adjust_factor = 1000000u,
+        .flags = OHLC_FIELDS_MARKET,
     };
 }
 
@@ -148,15 +149,15 @@ static void generate(const char* directory, uint32_t stocks, uint32_t times) {
             ohlc_write_encode(encoded, stock, key, &row);
             require(fwrite(encoded, sizeof(encoded), 1, binary) == 1, "Binary write failed");
             require(fprintf(tsv,
-                            "%" PRIu32 "\t%" PRIu32 "\t%" PRId32 "\t%" PRId32 "\t%" PRId32
-                            "\t%" PRId32 "\t%" PRIu32 "\t%" PRIu64 "\t%" PRIu32 "\n",
+                            "%" PRIu32 "\t%" PRIu32 "\t%" PRId64 "\t%" PRId64 "\t%" PRId64
+                            "\t%" PRId64 "\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64 "\n",
                             stock, key, row.open, row.high, row.low, row.close, row.volume,
                             row.amount, row.adjust_factor) > 0,
                     "TSV write failed");
             require(fprintf(line,
-                            "bars,ticker=%05" PRIu32 " open=%" PRId32 "i,high=%" PRId32
-                            "i,low=%" PRId32 "i,close=%" PRId32 "i,volume=%" PRIu32
-                            "u,amount=%" PRIu64 "u,adjust_factor=%" PRIu32 "u %" PRIu64 "\n",
+                            "bars,ticker=%05" PRIu32 " open=%" PRId64 "i,high=%" PRId64
+                            "i,low=%" PRId64 "i,close=%" PRId64 "i,volume=%" PRIu64
+                            "u,amount=%" PRIu64 "u,adjust_factor=%" PRIu64 "u %" PRIu64 "\n",
                             stock, row.open, row.high, row.low, row.close, row.volume, row.amount,
                             row.adjust_factor, (uint64_t)key * 60u) > 0,
                     "Line protocol write failed");
@@ -501,7 +502,7 @@ static void query_mysql(connection* client, bool cross, uint32_t stock, uint32_t
     }
     require(mysql_stmt_bind_param(statement, input) == 0, mysql_stmt_error(statement));
     require(mysql_stmt_execute(statement) == 0, mysql_stmt_error(statement));
-    result_row value = {0};
+    result_row value = {.value = {.flags = OHLC_FIELDS_MARKET}};
     void* values[] = {&value.key,          &value.value.open,         &value.value.high,
                       &value.value.low,    &value.value.close,        &value.value.volume,
                       &value.value.amount, &value.value.adjust_factor};
@@ -509,9 +510,9 @@ static void query_mysql(connection* client, bool cross, uint32_t stock, uint32_t
     my_bool nulls[8] = {0};
     my_bool errors[8] = {0};
     for (size_t i = 0; i < 8; i++) {
-        output[i].buffer_type = i == 6 ? MYSQL_TYPE_LONGLONG : MYSQL_TYPE_LONG;
+        output[i].buffer_type = i == 0 ? MYSQL_TYPE_LONG : MYSQL_TYPE_LONGLONG;
         output[i].buffer = values[i];
-        output[i].buffer_length = i == 6 ? sizeof(uint64_t) : sizeof(uint32_t);
+        output[i].buffer_length = i == 0 ? sizeof(uint32_t) : sizeof(uint64_t);
         output[i].is_unsigned = i == 0 || i >= 5;
         output[i].is_null = &nulls[i];
         output[i].error = &errors[i];
@@ -622,7 +623,8 @@ static void decode_influx(connection* client, bool cross) {
         client->rows[client->count++] = (result_row){
             .key = (uint32_t)key,
             .value = {(int32_t)values[1], (int32_t)values[2], (int32_t)values[3],
-                      (int32_t)values[4], (uint32_t)values[5], values[6], (uint32_t)values[7]},
+                      (int32_t)values[4], (uint32_t)values[5], values[6], (uint32_t)values[7], 0,
+                      OHLC_FIELDS_MARKET},
         };
     }
 }
@@ -647,9 +649,25 @@ static void query_http(connection* client, bool cross, uint32_t stock, uint32_t 
         }
         http_request(client, "/?database=baseline&use_query_cache=0&use_query_condition_cache=0",
                      sql, strlen(sql));
-        require(client->response.size % OHLC_RESULT_BYTES == 0, "Invalid ClickHouse result length");
-        append_binary(client, (const uint8_t*)client->response.data,
-                      client->response.size / OHLC_RESULT_BYTES);
+        /* The comparison fixture uses its own original 36-byte RowBinary schema. */
+        require(client->response.size % 36u == 0, "Invalid ClickHouse result length");
+        size_t count = client->response.size / 36u;
+        require(count <= MAX_ROWS - client->count, "Too many result rows");
+        for (size_t i = 0; i < count; i++) {
+            const uint8_t* bytes = (const uint8_t*)client->response.data + i * 36u;
+            result_row* row = &client->rows[client->count++];
+            row->key = little_u32(bytes);
+            row->value = (ohlc_row){
+                .open = little_u32(bytes + 4),
+                .high = little_u32(bytes + 8),
+                .low = little_u32(bytes + 12),
+                .close = little_u32(bytes + 16),
+                .volume = little_u32(bytes + 20),
+                .amount = little_u32(bytes + 24) | ((uint64_t)little_u32(bytes + 28) << 32),
+                .adjust_factor = little_u32(bytes + 32),
+                .flags = OHLC_FIELDS_MARKET,
+            };
+        }
         return;
     }
     if (cross) {
@@ -695,7 +713,8 @@ static void verify(connection* client, bool cross, uint32_t stock, uint32_t firs
         require(value->open == expected.open && value->high == expected.high &&
                     value->low == expected.low && value->close == expected.close &&
                     value->volume == expected.volume && value->amount == expected.amount &&
-                    value->adjust_factor == expected.adjust_factor,
+                    value->adjust_factor == expected.adjust_factor &&
+                    value->reserved == expected.reserved && value->flags == expected.flags,
                 "Seven-field value mismatch");
     }
 }

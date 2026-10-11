@@ -42,9 +42,9 @@ import javax.net.ssl.SSLSocket;
  */
 public final class Ohlc implements AutoCloseable {
     public static final String VERSION = "0.1.0-beta.1";
-    public static final int ROW_BYTES = 32;
-    public static final int WRITE_BYTES = 40;
-    public static final int RESULT_BYTES = 36;
+    public static final int ROW_BYTES = 64;
+    public static final int WRITE_BYTES = 72;
+    public static final int RESULT_BYTES = 68;
     private static final int FRAME_LIMIT = 16 * 1024 * 1024;
     private static final ScheduledThreadPoolExecutor DEADLINES = deadlines();
     private static final Pattern TIME = Pattern.compile(
@@ -194,7 +194,7 @@ public final class Ohlc implements AutoCloseable {
         long rows = u32(response);
         queryMs = u32(response);
         capabilities = response.getInt();
-        if (frame < 32 || frame > FRAME_LIMIT || rows == 0 || rows > 250000 ||
+        if (frame < 32 || frame > FRAME_LIMIT || rows == 0 || rows > 200000 ||
                 queryMs == 0 || capabilities < 1 || capabilities > 3) {
             throw corrupt("Invalid HELLO capabilities");
         }
@@ -273,7 +273,7 @@ public final class Ohlc implements AutoCloseable {
         chunk = 0;
         arm(deadlineMs);
         ByteBuffer header = buffer(32);
-        header.put(new byte[] {'O', 'H', 'L', 'C'}).putShort((short) 5).putShort((short) opcode)
+        header.put(new byte[] {'O', 'H', 'L', 'C'}).putShort((short) 6).putShort((short) opcode)
               .putInt(0).putInt(body.remaining()).putLong(request).putInt(0).putInt(0);
         output.write(header.array());
         ByteBuffer source = body.duplicate();
@@ -296,7 +296,7 @@ public final class Ohlc implements AutoCloseable {
         byte[] header = new byte[32];
         input.readFully(header);
         ByteBuffer fields = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN);
-        if (fields.getInt() != 0x434c484f || fields.getShort() != 5 ||
+        if (fields.getInt() != 0x434c484f || fields.getShort() != 6 ||
                 Short.toUnsignedInt(fields.getShort()) != opcode) {
             throw corrupt("Invalid response header");
         }
@@ -389,7 +389,7 @@ public final class Ohlc implements AutoCloseable {
     public static ByteBuffer namedBatch(byte[][] tickers, ByteBuffer rows) {
         int count = rows.remaining() / WRITE_BYTES;
         if (rows.remaining() == 0 || rows.remaining() % WRITE_BYTES != 0 ||
-                count > 250000 || tickers.length == 0 || tickers.length > count) {
+                count > 200000 || tickers.length == 0 || tickers.length > count) {
             throw new IllegalArgumentException("Invalid named batch length");
         }
         long size = 8L + rows.remaining();
@@ -736,10 +736,25 @@ public final class Ohlc implements AutoCloseable {
             }
         }
 
-        public long insert(String ticker, String time, int open, int high, int low, int close,
+        /** Insert seven present fields and a NULL reserved value. */
+        public long insert(String ticker, String time, long open, long high, long low, long close,
                            long volume, long amountBits, long factor) throws IOException {
+            return insert(ticker, time, new Ohlc.Row(open, high, low, close, volume, amountBits,
+                                                  factor, null));
+        }
+
+        /** Insert eight present fields; unsigned fields retain every long bit. */
+        public long insert(String ticker, String time, long open, long high, long low, long close,
+                           long volume, long amountBits, long factor, int reserved)
+                throws IOException {
+            return insert(ticker, time, new Ohlc.Row(open, high, low, close, volume, amountBits,
+                                                  factor, reserved));
+        }
+
+        /** Insert a complete row, replacing existing fields including NULLs. */
+        public long insert(String ticker, String time, Ohlc.Row value) throws IOException {
             ByteBuffer row = buffer(WRITE_BYTES);
-            putWrite(row, 0, timeKey(time), open, high, low, close, volume, amountBits, factor);
+            Ohlc.putWrite(row, 0, timeKey(time), value);
             return write(new byte[][] {ticker.getBytes(StandardCharsets.UTF_8)}, row.flip());
         }
 
@@ -889,14 +904,80 @@ public final class Ohlc implements AutoCloseable {
         return Integer.toUnsignedLong(buffer.getInt());
     }
 
-    /** amountBits accepts every long bit pattern; use Long.parseUnsignedLong
-     * and Long.toUnsignedString when converting uint64 amount to/from text.
+    /** Nullable market row. Volume, amount and adjustFactor store uint64 bit patterns;
+     * use Long.parseUnsignedLong / Long.toUnsignedString for their decimal text.
+     * Prices are signed int64 and reserved is signed int32. Null means absent.
      */
-    public static void putWrite(ByteBuffer buffer, long ticker, long time, int open, int high,
-                                int low, int close, long volume, long amountBits, long factor) {
-        buffer.order(ByteOrder.LITTLE_ENDIAN).putInt(uint32(ticker)).putInt(uint32(time))
-              .putInt(open).putInt(high).putInt(low).putInt(close).putInt(uint32(volume))
-              .putLong(amountBits).putInt(uint32(factor));
+    public record Row(Long open, Long high, Long low, Long close, Long volume, Long amount,
+                      Long adjustFactor, Integer reserved) {}
+
+    /** Encode seven present fields and a NULL reserved value. */
+    public static void putWrite(ByteBuffer buffer, long ticker, long time, long open, long high,
+                                long low, long close, long volume, long amountBits, long factor) {
+        putWrite(buffer, ticker, time,
+                 new Row(open, high, low, close, volume, amountBits, factor, null));
+    }
+
+    /** Encode eight present fields. The buffer must have WRITE_BYTES free. */
+    public static void putWrite(ByteBuffer buffer, long ticker, long time, long open, long high,
+                                long low, long close, long volume, long amountBits, long factor,
+                                int reserved) {
+        putWrite(buffer, ticker, time,
+                 new Row(open, high, low, close, volume, amountBits, factor, reserved));
+    }
+
+    /** Encode a nullable row with canonical zero bytes for absent fields. */
+    public static void putWrite(ByteBuffer buffer, long ticker, long time, Row row) {
+        uint32(ticker);
+        uint32(time);
+        java.util.Objects.requireNonNull(row, "row");
+        if (buffer.remaining() < WRITE_BYTES) {
+            throw new java.nio.BufferOverflowException();
+        }
+        buffer.order(ByteOrder.LITTLE_ENDIAN).putInt((int) ticker).putInt((int) time);
+        Long[] values = {row.open(), row.high(), row.low(), row.close(), row.volume(),
+                         row.amount(), row.adjustFactor()};
+        int flags = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] != null) {
+                flags |= 1 << i;
+            }
+            buffer.putLong(values[i] == null ? 0 : values[i]);
+        }
+        if (row.reserved() != null) {
+            flags |= 0x80;
+        }
+        buffer.putInt(row.reserved() == null ? 0 : row.reserved()).putInt(flags);
+    }
+
+    /** Decode ROW_BYTES at the current position, after the result key, advancing the buffer.
+     * Reject nonzero reserved bits and nonzero bytes in NULL fields.
+     */
+    public static Row getRow(ByteBuffer buffer) {
+        if (buffer.remaining() < ROW_BYTES) {
+            throw new java.nio.BufferUnderflowException();
+        }
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        int flags = buffer.getInt(buffer.position() + 60);
+        if ((flags & ~0xff) != 0) {
+            throw new IllegalArgumentException("Unsupported row flags");
+        }
+        Long[] values = new Long[7];
+        for (int i = 0; i < values.length; i++) {
+            long value = buffer.getLong();
+            if ((flags & (1 << i)) != 0) {
+                values[i] = value;
+            } else if (value != 0) {
+                throw new IllegalArgumentException("Nonzero NULL payload");
+            }
+        }
+        int reserved = buffer.getInt();
+        buffer.getInt();
+        if ((flags & 0x80) == 0 && reserved != 0) {
+            throw new IllegalArgumentException("Nonzero NULL payload");
+        }
+        return new Row(values[0], values[1], values[2], values[3], values[4], values[5], values[6],
+                       (flags & 0x80) == 0 ? null : Integer.valueOf(reserved));
     }
 
     private static ByteBuffer string(byte[] bytes) {

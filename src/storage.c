@@ -23,9 +23,9 @@ static ohlc_status file_size(int fd, uint64_t* size) {
 
 ohlc_status ohlc_storage_header(ohlc_db* db, int fd, uint32_t type, uint32_t table, uint32_t volume,
                                 uint64_t generation, bool create) {
-    uint8_t header[OHLC_BLOCK_BYTES] = {0};
+    uint8_t header[OHLC_PAGE_BYTES] = {0};
     if (create) {
-        memcpy(header, "OHLCFIL5", 8);
+        memcpy(header, "OHLCFIL6", 8);
         ohlc_put_u32(header + 8, OHLC_FORMAT_VERSION);
         ohlc_put_u32(header + 12, type);
         memcpy(header + 16, db->uuid, 16);
@@ -52,7 +52,7 @@ ohlc_status ohlc_storage_header(ohlc_db* db, int fd, uint32_t type, uint32_t tab
     if (ohlc_get_u32(header + 8) != OHLC_FORMAT_VERSION) {
         return OHLC_UNSUPPORTED;
     }
-    if (header[7] != '5' || ohlc_get_u32(header + 12) != type ||
+    if (header[7] != '6' || ohlc_get_u32(header + 12) != type ||
         memcmp(header + 16, db->uuid, 16) != 0 || ohlc_get_u32(header + 32) != table ||
         ohlc_get_u32(header + 36) != volume || ohlc_get_u32(header + 40) != OHLC_BLOCK_BYTES ||
         ohlc_get_u32(header + 44) != OHLC_ROW_BYTES || ohlc_get_u32(header + 48) != 16 ||
@@ -299,20 +299,20 @@ static ohlc_status open_volume(ohlc_db* db, int directory, uint32_t table, uint3
         goto cleanup;
     }
     status = file_size(volume->data_fd, &volume->size);
-    if (status != OHLC_OK || volume->size < OHLC_BLOCK_BYTES) {
+    if (status != OHLC_OK || volume->size < OHLC_PAGE_BYTES) {
         status = OHLC_CORRUPT;
         goto cleanup;
     }
     uint64_t meta_size = 0;
     status = file_size(volume->meta_fd, &meta_size);
-    if (status != OHLC_OK || meta_size < OHLC_BLOCK_BYTES) {
+    if (status != OHLC_OK || meta_size < OHLC_PAGE_BYTES) {
         status = OHLC_CORRUPT;
         goto cleanup;
     }
     /* An unpublished tail may be incomplete. Retain complete physical pairs;
      * checkpoint references are validated separately before being accepted. */
-    uint64_t blocks = (volume->size - OHLC_BLOCK_BYTES) / OHLC_BLOCK_BYTES;
-    uint64_t meta_blocks = (meta_size - OHLC_BLOCK_BYTES) / 32u;
+    uint64_t blocks = (volume->size - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES;
+    uint64_t meta_blocks = (meta_size - OHLC_PAGE_BYTES) / 32u;
     if (meta_blocks < blocks) {
         blocks = meta_blocks;
     }
@@ -320,7 +320,7 @@ static ohlc_status open_volume(ohlc_db* db, int directory, uint32_t table, uint3
         status = OHLC_LIMIT;
         goto cleanup;
     }
-    volume->size = OHLC_BLOCK_BYTES + blocks * OHLC_BLOCK_BYTES;
+    volume->size = OHLC_PAGE_BYTES + blocks * OHLC_BLOCK_BYTES;
     status = meta_reserve(db, volume, (size_t)blocks);
     if (status != OHLC_OK) {
         goto cleanup;
@@ -332,7 +332,7 @@ static ohlc_status open_volume(ohlc_db* db, int directory, uint32_t table, uint3
             count = OHLC_META_PER_PAGE;
         }
         status = ohlc_read_full(volume->meta_fd, volume->meta_pages[i], count * 32u,
-                                OHLC_BLOCK_BYTES + (uint64_t)i * OHLC_META_PER_PAGE * 32u);
+                                OHLC_PAGE_BYTES + (uint64_t)i * OHLC_META_PER_PAGE * 32u);
         if (status != OHLC_OK) {
             goto cleanup;
         }
@@ -666,7 +666,7 @@ ohlc_status ohlc_storage_table(ohlc_db* db, uint32_t table_id, bool create,
     }
     /* create is used only after the recovered graph has no file object for
      * this table. A short orphan header cannot be referenced by that graph. */
-    if (create && !new_index && files->index_size < OHLC_BLOCK_BYTES) {
+    if (create && !new_index && files->index_size < OHLC_PAGE_BYTES) {
         if (ftruncate(files->index_fd, 0) != 0) {
             status = OHLC_IO;
             goto cleanup;
@@ -784,9 +784,10 @@ const uint8_t* ohlc_storage_presence(ohlc_db* db, uint32_t table, const ohlc_gro
     const uint8_t* presence = NULL;
     pthread_mutex_lock(&db->storage_mutex);
     ohlc_volume* volume = find_volume(db, table, entry->volume);
-    if (volume != NULL && offset >= OHLC_BLOCK_BYTES && offset % OHLC_BLOCK_BYTES == 0 &&
-        (offset - OHLC_BLOCK_BYTES) / OHLC_BLOCK_BYTES < volume->meta_count) {
-        presence = meta_at(volume, (offset - OHLC_BLOCK_BYTES) / OHLC_BLOCK_BYTES);
+    if (volume != NULL && offset >= OHLC_PAGE_BYTES &&
+        (offset - OHLC_PAGE_BYTES) % OHLC_BLOCK_BYTES == 0 &&
+        (offset - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES < volume->meta_count) {
+        presence = meta_at(volume, (offset - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES);
     }
     pthread_mutex_unlock(&db->storage_mutex);
     return presence;
@@ -805,8 +806,9 @@ static uint32_t tile_checksum(const uint8_t* data, const uint8_t* metadata, uint
 }
 
 static void cache_acquire(ohlc_db* db, uint32_t table, uint32_t volume, ohlc_tile_view* view) {
-    uint64_t hash = (view->offset / OHLC_BLOCK_BYTES) * UINT64_C(0x9e3779b185ebca87) ^
-                    (uint64_t)table * UINT64_C(0xc2b2ae3d27d4eb4f) ^ volume;
+    uint64_t hash =
+        ((view->offset - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES) * UINT64_C(0x9e3779b185ebca87) ^
+        (uint64_t)table * UINT64_C(0xc2b2ae3d27d4eb4f) ^ volume;
     hash = (hash ^ (hash >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
     hash = (hash ^ (hash >> 27)) * UINT64_C(0x94d049bb133111eb);
     hash ^= hash >> 31;
@@ -981,6 +983,14 @@ ohlc_status ohlc_storage_read(ohlc_db* db, uint32_t table, ohlc_tile_view* views
                           view->tile) != ohlc_get_u32(view->presence + 24)) {
             loaded = OHLC_CORRUPT;
         }
+        if (loaded == OHLC_OK) {
+            for (size_t slot = 0; slot < 128; slot++) {
+                if (!ohlc_row_valid(view->buffer + slot * OHLC_ROW_BYTES)) {
+                    loaded = OHLC_CORRUPT;
+                    break;
+                }
+            }
+        }
         publish_view(view, loaded);
         view->data = view->buffer;
         if (loaded != OHLC_OK) {
@@ -1107,7 +1117,7 @@ ohlc_status ohlc_storage_flush_group(ohlc_db* db, uint32_t table, uint32_t band,
     status = ohlc_write_full(volume->data_fd, data, blocks * OHLC_BLOCK_BYTES, base);
     if (status == OHLC_OK) {
         status = ohlc_write_full(volume->meta_fd, metadata, blocks * 32,
-                                 OHLC_BLOCK_BYTES + (uint64_t)volume->meta_count * 32u);
+                                 OHLC_PAGE_BYTES + (uint64_t)volume->meta_count * 32u);
     }
     if (status != OHLC_OK) {
         db->failed = true;

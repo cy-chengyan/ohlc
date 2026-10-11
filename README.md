@@ -18,9 +18,8 @@ and an interactive command shell.
 [RHEL packages](#rhel-packages) · [Benchmarks](#benchmarks) ·
 [Design](docs/design.md) · [Test report](docs/test-report.md)
 
-Current development format: **disk 5 / protocol 5 / C ABI 3**. Existing format-5 databases
-remain readable. Earlier disk formats are unsupported; no migration is provided.
-Update the server, libraries, and bindings together: series endpoints are now inclusive.
+Current development format: **disk 6 / protocol 6 / C ABI 4**. Earlier disk formats are unsupported; no migration is provided.
+Update the server, libraries, and bindings together: rows now use the nullable 64-byte format.
 
 ## What it provides
 
@@ -41,18 +40,20 @@ scaling, and adjustment factors.
 ## Data model
 
 The logical key is **`(table, ticker, timestamp)`**, using a calendar-date label for day/month/year tables.
-Every row has these seven fields, in this order:
+Every row has these eight nullable fields, in this order:
 
 | Fields | Type |
 |---|---|
-| `open`, `high`, `low`, `close` | `int32_t` each |
-| `volume` | `uint32_t` |
+| `open`, `high`, `low`, `close` | `int64_t` each |
+| `volume` | `uint64_t` |
 | `amount` | `uint64_t` |
-| `adjust_factor` | `uint32_t` |
+| `adjust_factor` | `uint64_t` |
+| `reserved` | `int32_t`, optional |
 
-The encoded row payload is **32 bytes**. Indexes, metadata, WAL, unused tile slots, and retained
+The encoded row payload is **64 bytes**, including field validity flags. Indexes, metadata, WAL, unused tile slots, and retained
 checkpoint images require additional space. Native C structure padding is not the storage format;
-use the supplied codecs.
+use the supplied codecs. All eight fields accept NULL (Python None / Java null).
+Omitting reserved sets it to NULL; writing zero stores a present zero. Writes replace the entire row.
 
 Each table owns its own ticker dictionary. Normal insert/write APIs and shell imports create
 missing tickers atomically with their rows; no prior registration is needed. IDs start at zero
@@ -73,7 +74,7 @@ describes caller-supplied bars: ohlc does not round timestamps, fill gaps, or ca
 ## Why integer values
 
 **The caller owns precision, units, scaling, rounding, and conversion. ohlc stores and returns the
-supplied integers exactly, within each field's declared range.** This boundary applies to all seven
+supplied integers exactly, within each field's declared range.** This boundary applies to all eight
 market-data fields in the APIs, shell, imports, and storage. Date and date-time inputs follow the
 separate time contract described above.
 
@@ -97,7 +98,7 @@ default or an automatically recorded scale.
 Callers must keep that convention consistent between writers and readers, choose their conversion
 and rounding rules, and ensure the result fits the field's integer range. ohlc cannot recover
 precision lost before submission. The authoritative contract is in the
-[data contract](docs/design.md#31-七字段定长行).
+[data contract](docs/design.md#31-八字段定长行).
 
 ## Quick start
 
@@ -181,7 +182,7 @@ Second/minute tables require a time zone; date-based tables have none. Second ke
 tables; fractional and leap seconds are rejected. Periods never round or aggregate input:
 `5s` accepts `09:30:17`, and month/year bars can use any valid date within the time-key range.
 Update the server and clients together to use the new units; update Java JAR/JNI together.
-The existing row layout and minute/day keys are unchanged.
+Period selection does not alter the shared row schema or the meaning of minute/day keys.
 
 Shell `series ... from START and END` includes both endpoints; the old `to` syntax is removed.
 `cross ... and ticker in (...)` filters on the server, ignores unknown tickers and missing bars,
@@ -192,7 +193,7 @@ are queried. C, Python and Java series APIs use the same inclusive endpoints.
 finish on their original snapshots before files are reclaimed. Recreating the name assigns
 a new table ID. C, Python, and Java also provide table deletion in both access modes.
 After using table deletion, keep this release or a newer one; older releases cannot read the
-deletion records. Existing databases can be opened directly by this release.
+deletion records. The current release requires disk format 6.
 
 ## Client libraries
 
@@ -253,7 +254,9 @@ with Database("./data/python-demo", create=True) as db:
 Use a fresh directory for the creation example. For an existing database, open it without
 `create=True` and use `db.table(name)`. Embedded applications schedule checkpoints explicitly;
 closing a database does not perform one. The server schedules checkpoints in the background.
-Successful writes are WAL-durable in both modes.
+Successful writes are WAL-durable in both modes. Supply `None` for a NULL field; a seven-value
+row leaves `reserved` NULL. For example, `(10000, None, None, 10080, 1200, None, None, 42)`
+stores open, close, volume, and the user value `reserved=42`, leaving the other fields NULL.
 
 For batch-oriented applications, use `write()` or `write_encoded()` and consume query chunks rather
 than creating a Python object for every row. See the [embedded example](examples/embedded.py) and
@@ -347,7 +350,7 @@ database files. Use packages and language bindings from the same release.
 
 ## Storage at a glance
 
-The current layout groups **16 tickers × 8 time positions** into a 4 KiB tile. A single primary
+The current layout groups **16 tickers × 8 time positions** into an 8 KiB tile. A single primary
 tiled layout serves both query directions. Large files hold the tiles; ticker dictionaries, time
 maps, and location metadata are resident in memory. Missing records have explicit presence bits.
 
@@ -361,6 +364,8 @@ See the [storage diagram](docs/images/ohlc-storage-index-overview.svg),
 [canonical design](docs/design.md) for the format and algorithms.
 
 ## Benchmarks
+
+These historical measurements use the former 32-byte row format, not the current 64-byte layout.
 
 Measured on **2026-09-27**, using **85,800,000 rows: 10,000 tickers × 8,580 minute bars**,
 on RHEL 9.4 x86-64 with NVMe storage and same-host TCP clients. Every timed query receives and
@@ -406,7 +411,7 @@ public download links.
 This beta has no per-row delete, automatic data compaction, replication, clustering, or shared
 file access across processes. It stores the caller's adjustment factor without calculating or
 carrying it forward. Files may retain historical checkpoint images, so plan disk capacity beyond
-32 bytes per record.
+64 bytes per record.
 
 The 20-year target scale, sustained production workloads across multiple tables, SELinux enforcing,
 FIPS mode, and real power-loss/device-failure behavior require separate validation. Keep the

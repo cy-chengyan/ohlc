@@ -1045,3 +1045,37 @@ SELinux enforcing、性能或真实断电验收。
 [EL8 Java 21](../build/acceptance/rpm-release9-20261011/java21-el8.log)、
 [EL9 Java 17](../build/acceptance/rpm-release9-20261011/java17-el9.log)、
 [EL9 Java 21](../build/acceptance/rpm-release9-20261011/java21-el9.log)。
+
+## 可空 64 B 行布局验收（2026-10-11）
+
+本节验证磁盘格式 6 / 协议 6 / C ABI 4：七个 64 位字段、可空 int32 reserved，
+以及八个有效位和 24 个保留位。每行 64 B、每块 128 行、行情块 8 KiB；文件头和索引页保持 4 KiB。
+此前各节的 32 B 行性能与容量实测属于旧布局，不代表当前实现。
+
+| 检查 | 实际结果 |
+|---|---|
+| EL8 用户态，GCC 8.5 / JDK 17 | 编译通过；CTest 11/11 通过 |
+| EL9 用户态，GCC 11.5 / JDK 21 | 编译通过；CTest 11/11 通过 |
+| EL9 ASan + UBSan | core、concurrency、pipeline 共 3/3 通过，无检查器报错 |
+| JDK 17 构建的同一份 JAR 在 JDK 21 运行 | 网络与 JNI 嵌入式测试通过，JNI 启用 `-Xcheck:jni` |
+| JAR 字节码 | 全部 20 个 class 为 major 61 / minor 0，无预览特性 |
+| 静态检查 | clang-format 21.1.8、Python 语法、SVG XML 和补丁空白检查通过 |
+| 辅助基准工具 | baseline_driver、retirement_benchmark 的严格 C 编译检查通过；未运行性能测量 |
+
+检查覆盖八字段全部 256 种有效位组合，int64/uint64/int32 极值、全 NULL 行与不存在记录的区别、
+显式 0 与 NULL、省略 reserved 覆盖旧值为空、WAL 重开及检查点重开、非对齐缓冲、跨语言往返。
+原始编码写入拒绝非零保留位和非零空字段载荷；超范围值和非整数被拒绝，失败写入不创建证券。
+shell 验证 NULL/null、九列旧输入形状和十列新输入、CSV 空字段、NULL 文本输出与 JSON null，
+以及 64 位整数使用十进制字符串无损导出。旧磁盘格式 5 和旧协议 5 明确拒绝。
+既有并发、同步失败、WAL 回收崩溃、备份恢复及 TLS 测试随完整回归通过。
+
+全部容器共享宿主机 RHEL 8 内核 `4.18.0-553.111.1.el8_10.x86_64`；EL9 为用户态验证，
+不是 RHEL 9 内核验收。本次未执行 RPM 构建、宿主机安装、性能、ARM64 或真实断电测试。
+初次 ASan 构建发现容器缺少检查器运行库，补齐 libasan/libubsan 后完成上述检查。
+RPM spec 已递增至 Release 10，属于待打包的源码元数据。
+
+证据：[汇总与 JAR 校验](../build/acceptance/wide-row-20261011/validation.json)、
+[EL8 回归](../build/acceptance/wide-row-20261011/test-el8.log)、
+[EL9 回归](../build/acceptance/wide-row-20261011/test-el9.log)、
+[ASan/UBSan 与辅助工具检查](../build/acceptance/wide-row-20261011/asan.log)、
+[同一 JAR 的 JDK 21 验证](../build/acceptance/wide-row-20261011/java21-same-jar.log)。

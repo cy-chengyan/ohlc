@@ -29,8 +29,7 @@ public final class Embedded {
                     output.flip();
                     while (output.hasRemaining()) {
                         long time = Ohlc.u32(output);
-                        int open = output.getInt();
-                        output.position(output.position() + Ohlc.ROW_BYTES - Integer.BYTES);
+                        Long open = Ohlc.getRow(output).open();
                         System.out.println(table.formatTime(time) + " open=" + open);
                     }
                 }

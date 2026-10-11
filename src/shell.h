@@ -75,7 +75,7 @@ void ohlc_shell_history_save(bool enabled);
 const char* ohlc_shell_complete(const char* prefix, size_t index);
 void ohlc_shell_print_bytes(FILE* file, const void* bytes, size_t size);
 bool ohlc_shell_uint(const shell_word* word, uint64_t maximum, uint64_t* output);
-bool ohlc_shell_row(const shell_word* values, ohlc_row* row);
+bool ohlc_shell_row(const shell_word* values, size_t count, ohlc_row* row);
 ohlc_status ohlc_shell_text_record(FILE* file, bool csv, shell_command* fields, bool* eof);
 
 #endif

@@ -15,9 +15,10 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "python"))
 from ohlc import Database, DatabaseOptions, Error
 from series_contract import check_closed_series
+from nullable_contract import check_nullable, verify_nullable
 
 
-EXTREMES = (-2147483648, 2147483647, -1, 0, 4294967295, 18446744073709551615, 4294967295)
+EXTREMES = (-(1 << 63), (1 << 63) - 1, -1, 0, (1 << 64) - 1, (1 << 64) - 1, (1 << 64) - 1, -(1 << 31))
 BINARY = b"00\0\xff\n"
 
 
@@ -86,17 +87,17 @@ def python_contract(path, library):
         assert day.time_key(day.format_time(0xffffffff)) == 0xffffffff
         require_error(1, lambda: minute.time_key("20260901 09:30:01"))
         # Backfill earlier timestamps after the later data already exists.
-        encoded = b"".join(struct.pack("<IIiiiiIQI", code, key + i * 3, *EXTREMES)
+        encoded = b"".join(struct.pack("<IIqqqqQQQiI", code, key + i * 3, *EXTREMES, 255)
                            for i in range(600))
-        minute.write_encoded(encoded[300 * 40:])
-        minute.write_encoded(bytearray(encoded[:300 * 40]))
-        require_error(1, lambda: minute.write_encoded(encoded[:40] * 2))
+        minute.write_encoded(encoded[300 * 72:])
+        minute.write_encoded(bytearray(encoded[:300 * 72]))
+        require_error(1, lambda: minute.write_encoded(encoded[:72] * 2))
         minute.insert(BINARY, key, (0,) * 7)
         day.insert("AAPL", "20260901", EXTREMES)
         snapshot = minute.cross(key)
         minute.insert("AAPL", key, (1,) * 7)
-        assert results(snapshot) == [(code, *EXTREMES), (binary, *((0,) * 7))]
-        assert results(minute.cross(key))[0] == (code, *((1,) * 7))
+        assert results(snapshot) == [(code, *EXTREMES), (binary, *((0,) * 7), None)]
+        assert results(minute.cross(key))[0] == (code, *((1,) * 7), None)
         minute.insert("AAPL", key, EXTREMES)
         with minute.series("AAPL", key, key + 1797) as query:
             chunks = list(query)
@@ -105,20 +106,21 @@ def python_contract(path, library):
         assert chunks[-1].final and len(chunks) > 2
         assert len({chunk.snapshot_sequence for chunk in chunks}) == 1
         # A buffer view with an offset and trailing bytes must retain its bounds.
-        output = bytearray(b"x" * (19 * 36 + 7))
+        output = bytearray(b"x" * (19 * 68 + 7))
         received = []
         with minute.series("AAPL", key, key + 1797) as query:
             while True:
                 count = query.read_into(memoryview(output)[3:-4])
                 if not count:
                     break
-                received.extend(struct.iter_unpack("<IiiiiIQI", output[3:3 + count * 36]))
+                received.extend(row[:-1] for row in
+                                struct.iter_unpack("<IqqqqQQQiI", output[3:3 + count * 68]))
         assert received == expected
         assert output[:3] == b"xxx" and output[-4:] == b"xxxx"
         with minute.cross(key) as query:
             retained = next(query)
         assert len(results(minute.cross(key))) == 2
-        assert list(retained.rows()) == [(code, *EXTREMES), (binary, *((0,) * 7))]
+        assert list(retained.rows()) == [(code, *EXTREMES), (binary, *((0,) * 7), None)]
         assert results(day.cross("20260901")) == [(code, *EXTREMES)]
         assert results(minute.cross(key - 1)) == []
         # A partially constructed query must release its native cursor once.
@@ -175,7 +177,7 @@ def table_deletion(path, library):
         assert results(snapshot) == [(code, *EXTREMES)]
         db.checkpoint()
         assert not old_files.exists()
-        assert results(new.cross("20260901")) == [(code, *((1,) * 7))]
+        assert results(new.cross("20260901")) == [(code, *((1,) * 7), None)]
         assert [item.id for item in db.tables()] == [keep.id, new.id]
         deleted_id = new.id
 
@@ -223,7 +225,7 @@ def table_deletion(path, library):
     with Database(fallback, options=options, library=library) as db:
         assert [item.id for item in db.tables()] == [keep.id, last.id]
         assert results(db.table("keep").cross("20260901")) == [(code, *EXTREMES)]
-        assert results(db.table("replace").cross("20260901")) == [(code, *((2,) * 7))]
+        assert results(db.table("replace").cross("20260901")) == [(code, *((2,) * 7), None)]
 
 
 def extended_periods(path, library):
@@ -257,6 +259,14 @@ def extended_periods(path, library):
 def main():
     library = os.path.abspath(sys.argv[1])
     with tempfile.TemporaryDirectory(prefix="ohlc-embed-", dir=os.environ.get("TMPDIR", "/tmp")) as temp:
+        nullable = Path(temp) / "nullable"
+        with Database(nullable, create=True, library=library) as db:
+            check_nullable(db.create("nullable", period="1d"))
+        for checkpoint in (True, False):
+            with Database(nullable, library=library) as db:
+                verify_nullable(db.table("nullable"))
+                if checkpoint:
+                    db.checkpoint()
         path = Path(temp) / "db"
         extended_periods(Path(temp) / "periods", library)
         table_deletion(Path(temp) / "drop", library)

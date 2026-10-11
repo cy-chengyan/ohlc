@@ -47,7 +47,8 @@ static void remove_directory(const char* path) {
 }
 
 static ohlc_row value_for(uint32_t ticker, uint32_t key) {
-    ohlc_row row = {.open = -(int32_t)key,
+    ohlc_row row = {.flags = OHLC_FIELDS_MARKET,
+                    .open = -(int32_t)key,
                     .high = (int32_t)ticker,
                     .low = INT32_MIN,
                     .close = (int32_t)key,
@@ -340,12 +341,12 @@ int main(void) {
     check_query(db, table.id, false, 0, 128);
     ohlc_get_stats(db, &after);
     CHECK(after.disk_read_calls - before.disk_read_calls == 1);
-    CHECK(after.disk_read_bytes - before.disk_read_bytes == 65536);
+    CHECK(after.disk_read_bytes - before.disk_read_bytes == 16u * OHLC_BLOCK_BYTES);
     before = after;
     check_query(db, table.id, true, 3, 257);
     ohlc_get_stats(db, &after);
     CHECK(after.disk_read_calls - before.disk_read_calls == 17);
-    CHECK(after.disk_read_bytes - before.disk_read_bytes == 17u * 4096u);
+    CHECK(after.disk_read_bytes - before.disk_read_bytes == 17u * OHLC_BLOCK_BYTES);
     OK(ohlc_close(db));
 
     options.cache_bytes = 1024u * 1024u;

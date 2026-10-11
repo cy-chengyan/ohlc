@@ -28,7 +28,7 @@ def main():
         source = root / "source"
         archive = root / "backup.ohlc"
         restored = root / "restored"
-        row = (-2147483648, 2147483647, -1, 0, 4294967295, 18446744073709551615, 4294967295)
+        row = (-(1 << 63), (1 << 63) - 1, -1, 0, (1 << 64) - 1, (1 << 64) - 1, (1 << 64) - 1, -(1 << 31))
         with Database(source, create=True, library=library) as db:
             minute = db.create("minute", timezone="UTC")
             day = db.create("day", period="5d")

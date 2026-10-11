@@ -83,9 +83,9 @@ class Server:
 
 def values(code, time_key, generation=0):
     if (code + time_key) % 37 == 0:
-        return (0,) * 7
-    return (-2147483648 + code, 2147483647 - generation, -time_key, generation,
-            4294967295 - code, 18446744073709551615 - time_key, 4294967295 - generation)
+        return (0,) * 8
+    return (-(1 << 63) + code, (1 << 63) - 1 - generation, -time_key, generation,
+            4294967295 - code, 18446744073709551615 - time_key, 4294967295 - generation, -(1 << 31) + generation)
 
 
 def write_rows(table, rows):
@@ -93,7 +93,7 @@ def write_rows(table, rows):
     for start in range(0, len(rows), 2048):
         encoded = bytearray()
         for code, key, row in rows[start:start + 2048]:
-            encoded.extend(struct.pack("<IIiiiiIQI", code, key, *row))
+            encoded.extend(struct.pack("<IIqqqqQQQiI", code, key, *row, 255))
         sequence = table.write_encoded(encoded)
     return sequence
 
@@ -358,7 +358,7 @@ def crash_boundary(binaries, root, phase):
                 for key in range(128):
                     row = values(code, key)
                     oracle[code, key] = row
-                    batch.extend(struct.pack("<IIiiiiIQI", code, key, *row))
+                    batch.extend(struct.pack("<IIqqqqQQQiI", code, key, *row, 255))
             arm.touch(exist_ok=False)
             try:
                 sequence = table.write_encoded(batch)

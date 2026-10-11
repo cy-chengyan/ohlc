@@ -105,7 +105,7 @@ class Database:
     operations enter during close. The library never retries mutations or
     starts an automatic checkpoint timer. Do not reuse this object after fork.
     """
-    max_write_rows = 250000
+    max_write_rows = 200000
 
     def __init__(self, path, *, create=False, options=None, chunk_rows=4096, library=None):
         self._handle = C.c_void_p()
@@ -321,24 +321,24 @@ class EmbeddedTable(Table):
         owner = self.connection
         with owner._lease() as handle:
             owner._check(owner._lib.ohlc_write_named(
-                handle, self.id, names, len(names), storage, len(encoded) // 40, C.byref(sequence)))
+                handle, self.id, names, len(names), storage, len(encoded) // 72, C.byref(sequence)))
         return sequence.value
 
     def write_encoded(self, buffer):
         """Borrow a contiguous writable buffer for this call, or copy a readonly buffer.
 
         Never modify a borrowed buffer until this method returns. Records are
-        the same 40-byte little-endian representation used by the C API.
+        the same 72-byte little-endian representation used by the C API.
         """
         view = memoryview(buffer).cast("B")
         owner = self.connection
-        if not view or len(view) % 40 or len(view) // 40 > owner.max_write_rows:
-            raise ValueError("Expected 1..max_write_rows complete 40-byte records")
+        if not view or len(view) % 72 or len(view) // 72 > owner.max_write_rows:
+            raise ValueError("Expected 1..max_write_rows complete 72-byte records")
         storage = ((C.c_ubyte * len(view)).from_buffer_copy(view) if view.readonly
                    else (C.c_ubyte * len(view)).from_buffer(view))
         sequence = C.c_uint64()
         with owner._lease() as handle:
-            owner._check(owner._lib.ohlc_write(handle, self.id, storage, len(view) // 40,
+            owner._check(owner._lib.ohlc_write(handle, self.id, storage, len(view) // 72,
                                               C.byref(sequence)))
         return sequence.value
 
@@ -380,18 +380,18 @@ class EmbeddedQuery:
     def read_into(self, buffer):
         """Fill a writable contiguous buffer with at most 16384 result records.
 
-        Return the number of complete 36-byte records, or zero at EOF. Bytes
+        Return the number of complete 68-byte records, or zero at EOF. Bytes
         after the returned records are unchanged. Reuse the caller-owned
         buffer between calls; do not access it while a read is in progress.
         """
         view = memoryview(buffer).cast("B")
-        if view.readonly or len(view) < 36:
+        if view.readonly or len(view) < 68:
             raise ValueError("Expected a writable buffer with room for a result record")
         storage = (C.c_ubyte * len(view)).from_buffer(view)
         with self._state.lock:
             if not self._state.handle:
                 return 0
-            return self._read_locked(storage, min(16384, len(view) // 36))
+            return self._read_locked(storage, min(16384, len(view) // 68))
 
     def __next__(self):
         owner = self._owner
@@ -400,10 +400,10 @@ class EmbeddedQuery:
             if not state.handle:
                 raise StopIteration
             capacity = owner.chunk_rows
-            buffer = bytearray(capacity * 36)
+            buffer = bytearray(capacity * 68)
             storage = (C.c_ubyte * len(buffer)).from_buffer(buffer)
             count = self._read_locked(storage, capacity)
-            return Chunk(memoryview(buffer)[:count * 36].toreadonly(), count,
+            return Chunk(memoryview(buffer)[:count * 68].toreadonly(), count,
                          self.snapshot_sequence, count == 0)
 
     def close(self):

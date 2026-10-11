@@ -105,7 +105,7 @@ def summarize_case(directory):
         cold[label]["max_remaining_pages"] = max(row["eviction"]["resident_after"]
                                                    for row in first_queries)
         cold[label]["read_bytes_per_payload_byte"] = (
-            cold[label]["read_bytes"]["median"] / (expected * 32))
+            cold[label]["read_bytes"]["median"] / (expected * layout.get("row_bytes", 32)))
 
     files = json.loads((directory / "ohlc-files.json").read_text())
     categories = {"data": 0, "metadata": 0, "index": 0, "catalog": 0, "wal": 0, "other": 0}
@@ -114,9 +114,9 @@ def summarize_case(directory):
         path = Path(entry["path"])
         if path.name.startswith("data-") and path.suffix == ".dat":
             key = "data"
-            if (entry["logical"] - 4096) % 4096:
+            if (entry["logical"] - 4096) % layout.get("block_bytes", 4096):
                 raise ValueError("Unaligned data volume")
-            physical_slots += (entry["logical"] - 4096) // 4096
+            physical_slots += (entry["logical"] - 4096) // layout.get("block_bytes", 4096)
         elif path.suffix == ".meta":
             key = "metadata"
         elif path.name.startswith("index-"):
@@ -152,7 +152,8 @@ def summarize_case(directory):
     return {"configuration": configuration, "layout": layout, "warm": warm, "cold": cold,
             "memory": memory, "storage": storage, "file_bytes": categories,
             "appended_data_slots": physical_slots,
-            "retained_extra_data_bytes": (physical_slots - layout["current_tiles"]) * 4096,
+            "retained_extra_data_bytes": ((physical_slots - layout["current_tiles"]) *
+                                          layout.get("block_bytes", 4096)),
             "lifecycle_checks": lifecycle, "tail_validation": validation,
             "registration_ns": sum(row["wall_ns"] for row in registrations),
             "tail_write_ns": sum(row["wall_ns"] for row in loads),

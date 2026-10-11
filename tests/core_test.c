@@ -51,14 +51,15 @@ static void remove_directory(const char* path) {
 }
 
 static ohlc_row value_for(uint32_t stock, uint32_t key) {
-    ohlc_row row = {0};
-    row.open = INT32_MIN + (int32_t)stock;
-    row.high = INT32_MAX - (int32_t)stock;
+    ohlc_row row = {.flags = OHLC_FIELDS_ALL};
+    row.open = INT64_MIN + (int64_t)stock;
+    row.high = INT64_MAX - (int64_t)stock;
     row.low = -(int32_t)key;
     row.close = (int32_t)key;
-    row.volume = UINT32_MAX - key;
+    row.volume = UINT64_MAX - key;
     row.amount = UINT64_MAX - (uint64_t)stock * 65537u - key;
-    row.adjust_factor = key ^ stock;
+    row.adjust_factor = UINT64_MAX - (key ^ stock);
+    row.reserved = INT32_MIN + (int32_t)key;
     return row;
 }
 
@@ -89,15 +90,34 @@ static void test_format(void) {
         CHECK(ohlc_crc32c(seed, arbitrary + alignment, length) == ~crc);
     }
     ohlc_row row = value_for(0, 17);
-    uint8_t bytes[33];
+    uint8_t bytes[OHLC_ROW_BYTES + 1];
     ohlc_row_encode(bytes + 1, &row);
-    CHECK(ohlc_get_u32(bytes + 1) == UINT32_C(0x80000000));
-    CHECK(ohlc_get_u64(bytes + 21) == UINT64_MAX - 17u);
+    CHECK(ohlc_get_u64(bytes + 1) == UINT64_C(0x8000000000000000));
+    CHECK(ohlc_get_u64(bytes + 41) == UINT64_MAX - 17u);
     ohlc_row decoded;
     ohlc_row_decode(bytes + 1, &decoded);
     CHECK(decoded.open == row.open && decoded.high == row.high && decoded.low == row.low &&
           decoded.close == row.close && decoded.volume == row.volume &&
-          decoded.amount == row.amount && decoded.adjust_factor == row.adjust_factor);
+          decoded.amount == row.amount && decoded.adjust_factor == row.adjust_factor &&
+          decoded.reserved == row.reserved && decoded.flags == row.flags);
+    CHECK(OHLC_ROW_BYTES == 64 && OHLC_BLOCK_BYTES == 8192);
+    CHECK(OHLC_WRITE_BYTES == 72 && OHLC_RESULT_BYTES == 68);
+    for (uint32_t flags = 0; flags <= OHLC_FIELDS_ALL; flags++) {
+        row.flags = flags;
+        row.reserved = INT32_MAX;
+        ohlc_row_encode(bytes + 1, &row);
+        CHECK(ohlc_get_u32(bytes + 61) == flags);
+        CHECK(ohlc_row_valid(bytes + 1));
+        ohlc_row_decode(bytes + 1, &decoded);
+        CHECK(decoded.flags == flags);
+        CHECK(decoded.open == ((flags & OHLC_FIELD_OPEN) != 0 ? row.open : 0));
+        CHECK(decoded.reserved == ((flags & OHLC_FIELD_RESERVED) != 0 ? INT32_MAX : 0));
+    }
+    bytes[64] = 1;
+    CHECK(!ohlc_row_valid(bytes + 1));
+    memset(bytes, 0, sizeof(bytes));
+    bytes[1] = 1;
+    CHECK(!ohlc_row_valid(bytes + 1));
 }
 
 static void test_time_tree(void) {
@@ -283,7 +303,7 @@ static void test_closed_series(void) {
     const uint32_t keys[] = {UINT32_MAX, 7, 1, 0};
     uint8_t rows[4 * OHLC_WRITE_BYTES];
     for (size_t i = 0; i < 4; i++) {
-        ohlc_row value = {0};
+        ohlc_row value = {.flags = OHLC_FIELDS_MARKET};
         value.amount = keys[i];
         ohlc_write_encode(rows + i * OHLC_WRITE_BYTES, 0, keys[i], &value);
     }
@@ -951,10 +971,10 @@ static void test_table_dictionaries(void) {
     CHECK(snprintf(catalog, sizeof(catalog), "%s/catalog-000001.dat", path) > 0);
     int fd = open(catalog, O_RDWR);
     CHECK(fd >= 0);
-    uint8_t header[OHLC_BLOCK_BYTES];
+    uint8_t header[OHLC_PAGE_BYTES];
     OK(ohlc_read_full(fd, header, sizeof(header), 0));
-    header[7] = '4';
-    ohlc_put_u32(header + 8, 4);
+    header[7] = '5';
+    ohlc_put_u32(header + 8, 5);
     ohlc_put_u32(header + 4092, 0);
     ohlc_put_u32(header + 4092, ohlc_crc32c(0, header, sizeof(header)));
     OK(ohlc_write_full(fd, header, sizeof(header), 0));

@@ -11,12 +11,12 @@ extern "C" {
 #endif
 
 #define OHLC_VERSION "0.1.0-beta.1"
-#define OHLC_ABI_VERSION 3u
-#define OHLC_FORMAT_VERSION 5u
-#define OHLC_ROW_BYTES 32u
-#define OHLC_WRITE_BYTES 40u
-#define OHLC_RESULT_BYTES 36u
-#define OHLC_MAX_BATCH_ROWS 250000u
+#define OHLC_ABI_VERSION 4u
+#define OHLC_FORMAT_VERSION 6u
+#define OHLC_ROW_BYTES 64u
+#define OHLC_WRITE_BYTES 72u
+#define OHLC_RESULT_BYTES 68u
+#define OHLC_MAX_BATCH_ROWS 200000u
 #define OHLC_MAX_QUERY_TICKERS 65536u
 
 typedef enum {
@@ -48,15 +48,32 @@ ohlc_status ohlc_period_parse(const char* text, ohlc_period_unit* unit, uint32_t
 /* Borrow an immutable suffix, or NULL for an unknown unit. Thread-safe. */
 const char* ohlc_period_suffix(ohlc_period_unit unit);
 
+/* Field presence bits, in encoded field order. Zero is distinct from NULL. */
+#define OHLC_FIELD_OPEN (1u << 0)
+#define OHLC_FIELD_HIGH (1u << 1)
+#define OHLC_FIELD_LOW (1u << 2)
+#define OHLC_FIELD_CLOSE (1u << 3)
+#define OHLC_FIELD_VOLUME (1u << 4)
+#define OHLC_FIELD_AMOUNT (1u << 5)
+#define OHLC_FIELD_ADJUST_FACTOR (1u << 6)
+#define OHLC_FIELD_RESERVED (1u << 7)
+#define OHLC_FIELDS_MARKET 0x7fu
+#define OHLC_FIELDS_ALL 0xffu
+
 /* This native value is not the disk or wire layout. Always use the row codec. */
 typedef struct {
-    int32_t open;
-    int32_t high;
-    int32_t low;
-    int32_t close;
-    uint32_t volume;
+    int64_t open;
+    int64_t high;
+    int64_t low;
+    int64_t close;
+    uint64_t volume;
     uint64_t amount;
-    uint32_t adjust_factor;
+    uint64_t adjust_factor;
+    /* Optional caller value; flags controls presence independently of its value. */
+    int32_t reserved;
+    /* Low eight bits indicate non-NULL fields. High 24 bits must remain zero.
+     * A zero-initialized row has eight NULLs and is still a present record. */
+    uint32_t flags;
 } ohlc_row;
 
 typedef struct {
@@ -120,7 +137,9 @@ uint32_t ohlc_abi_version(void);
 const char* ohlc_status_string(ohlc_status status);
 void ohlc_options_init(ohlc_options* options);
 /* Codec arguments must be non-NULL; native rows and encoded buffers must not
- * overlap. Codecs preserve every bit and do not validate market semantics. */
+ * overlap. Encoding zeros NULL payloads and the high 24 flag bits. Decoding exposes
+ * flags; a NULL field has a zero native value. Codecs do not validate market
+ * semantics. Raw encoded writes reject noncanonical NULLs or reserved bits. */
 void ohlc_row_encode(uint8_t output[OHLC_ROW_BYTES], const ohlc_row* row);
 void ohlc_row_decode(const uint8_t input[OHLC_ROW_BYTES], ohlc_row* row);
 void ohlc_write_encode(uint8_t output[OHLC_WRITE_BYTES], uint32_t ticker_code, uint32_t time_key,

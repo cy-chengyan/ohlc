@@ -51,7 +51,8 @@ int main(int argc, char** argv) {
         if (!successful(ohlc_time_parse(&table, times[i], &keys[i]))) {
             goto cleanup;
         }
-        ohlc_row row = {10000, 10100, 9950, 10080, 1200, UINT64_C(12100000), 1000000};
+        ohlc_row row = {
+            10000, 10100, 9950, 10080, 1200, UINT64_C(12100000), 1000000, 0, OHLC_FIELDS_MARKET};
         row.close += (int32_t)i;
         ohlc_write_encode(batch + i * OHLC_WRITE_BYTES, code, keys[i], &row);
     }
@@ -78,8 +79,8 @@ int main(int argc, char** argv) {
             if (!successful(ohlc_time_format(&table, result_key(record), time, sizeof(time)))) {
                 goto cleanup;
             }
-            printf("%s: open=%" PRId32 " high=%" PRId32 " low=%" PRId32 " close=%" PRId32
-                   " volume=%" PRIu32 " amount=%" PRIu64 " factor=%" PRIu32 "\n",
+            printf("%s: open=%" PRId64 " high=%" PRId64 " low=%" PRId64 " close=%" PRId64
+                   " volume=%" PRIu64 " amount=%" PRIu64 " factor=%" PRIu64 "\n",
                    time, row.open, row.high, row.low, row.close, row.volume, row.amount,
                    row.adjust_factor);
         }

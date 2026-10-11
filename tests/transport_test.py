@@ -20,7 +20,7 @@ from network_test import connect_when_ready, require_error
 
 
 def frame(operation, request, body=b"", flags=3, status=0, chunk=0):
-    return struct.pack("<4sHHIIQII", b"OHLC", 5, operation, flags, len(body), request,
+    return struct.pack("<4sHHIIQII", b"OHLC", 6, operation, flags, len(body), request,
                        status, chunk) + body
 
 
@@ -52,7 +52,7 @@ def fake_server(handler):
                     peer.settimeout(5)
                     operation, request, _ = receive(peer)
                     assert operation == 1
-                    hello = b"\x01" * 16 + struct.pack("<IIII", 16 << 20, 250000, 30000, 3)
+                    hello = b"\x01" * 16 + struct.pack("<IIII", 16 << 20, 200000, 30000, 3)
                     peer.sendall(frame(1, request, hello))
                     handler(peer)
         except BaseException as error:
@@ -129,7 +129,7 @@ def protocol_failures(library, shell):
         peer.sendall(frame(10, request, struct.pack("<IQ", 1, 1) + definition))
         operation, request, _ = receive(peer)
         assert operation == 6
-        body = struct.pack("<QQIIII", 1, 1, 1, 2, 1, 0) + struct.pack("<IiiiiIQI", 0, 1, 2, 3, 4, 5, 6, 7)
+        body = struct.pack("<QQIIII", 1, 1, 1, 2, 1, 0) + struct.pack("<IqqqqQQQiI", 0, 1, 2, 3, 4, 5, 6, 7, 0, 127)
         peer.sendall(frame(6, request, body, flags=1))
         # EOF without FINAL must never convert a partial result into success.
     port, thread, errors = fake_server(partial_query)
@@ -182,7 +182,7 @@ def terminal_check(shell, socket_path, token, root):
         until(b"Created commit_seq=")
         until(b"ohlc> ")
         os.write(master, b"describe inter\t;\n")
-        until(b"6 adjust_factor uint32")
+        until(b"6 adjust_factor uint64")
         until(b"ohlc> ")
         os.write(master, b"quit;\n")
         process.wait(timeout=10)
@@ -241,7 +241,7 @@ def plain_tcp(server, library, shell, root, token, authenticated):
             table.insert("TCP", "20260901", (1, 2, 3, 4, 5, 6, 7))
             with table.cross("20260901") as query:
                 rows = [row for chunk in query for row in chunk.rows()]
-            assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+            assert rows == [(0, 1, 2, 3, 4, 5, 6, 7, None)]
         if not authenticated:
             incomplete_requests(host, port)
         if authenticated:
@@ -252,7 +252,7 @@ def plain_tcp(server, library, shell, root, token, authenticated):
                 require_error(8, lambda: table.insert("TCP", "20260901", (0,) * 7))
                 with table.cross("20260901") as query:
                     rows = [row for chunk in query for row in chunk.rows()]
-                assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+                assert rows == [(0, 1, 2, 3, 4, 5, 6, 7, None)]
         command = [shell, "--host", host, "--port", str(port)]
         if authenticated:
             command.extend(["--token-file", str(token)])
@@ -285,7 +285,7 @@ def anonymous_tls(server, library, root, certificate, private_key):
             table.insert("TLS", "20260901", (1, 2, 3, 4, 5, 6, 7))
             with table.cross("20260901") as query:
                 rows = [row for chunk in query for row in chunk.rows()]
-            assert rows == [(0, 1, 2, 3, 4, 5, 6, 7)]
+            assert rows == [(0, 1, 2, 3, 4, 5, 6, 7, None)]
         context = ssl.create_default_context(cafile=str(certificate))
         with socket.create_connection(("127.0.0.1", port), timeout=3) as raw:
             with context.wrap_socket(raw, server_hostname="localhost") as peer:

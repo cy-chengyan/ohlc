@@ -604,7 +604,8 @@ ohlc_status ohlc_client_next(ohlc_client* client, ohlc_bytes* rows, uint32_t* co
     }
     for (uint32_t i = 0; i < length; i++) {
         uint32_t key = ohlc_get_u32(body + 32u + i * OHLC_RESULT_BYTES);
-        if ((client->emitted + i != 0 && key <= client->last_key) || key < client->start ||
+        if (!ohlc_row_valid(body + 32u + i * OHLC_RESULT_BYTES + 4) ||
+            (client->emitted + i != 0 && key <= client->last_key) || key < client->start ||
             key >= client->end) {
             return fail_connection(client, OHLC_CORRUPT);
         }

@@ -217,31 +217,57 @@ bool ohlc_shell_uint(const shell_word* word, uint64_t maximum, uint64_t* output)
     return true;
 }
 
-bool ohlc_shell_row(const shell_word* values, ohlc_row* row) {
-    int32_t prices[4];
-    for (size_t i = 0; i < 4; i++) {
-        shell_word word = values[i];
-        bool negative = word.size != 0 && word.text[0] == '-';
-        if (negative) {
-            word.text++;
-            word.size--;
-        }
-        uint64_t value;
-        if (!ohlc_shell_uint(&word, negative ? UINT64_C(2147483648) : INT32_MAX, &value)) {
-            return false;
-        }
-        prices[i] = negative ? (int32_t)(-(int64_t)value) : (int32_t)value;
+static bool signed_integer(shell_word word, int64_t* output) {
+    bool negative = word.size != 0 && word.text[0] == '-';
+    if (negative) {
+        word.text++;
+        word.size--;
     }
-    uint64_t volume;
-    uint64_t amount;
-    uint64_t factor;
-    if (!ohlc_shell_uint(&values[4], UINT32_MAX, &volume) ||
-        !ohlc_shell_uint(&values[5], UINT64_MAX, &amount) ||
-        !ohlc_shell_uint(&values[6], UINT32_MAX, &factor)) {
+    uint64_t value;
+    uint64_t maximum = negative ? (uint64_t)INT64_MAX + 1u : (uint64_t)INT64_MAX;
+    if (!ohlc_shell_uint(&word, maximum, &value)) {
         return false;
     }
-    *row = (ohlc_row){prices[0],        prices[1], prices[2],       prices[3],
-                      (uint32_t)volume, amount,    (uint32_t)factor};
+    *output = negative && value != 0 ? -(int64_t)(value - 1u) - 1 : (int64_t)value;
+    return true;
+}
+
+bool ohlc_shell_row(const shell_word* values, size_t count, ohlc_row* row) {
+    if (count != 7 && count != 8) {
+        return false;
+    }
+    uint8_t encoded[OHLC_ROW_BYTES] = {0};
+    uint32_t flags = 0;
+    for (size_t i = 0; i < count; i++) {
+        const shell_word* word = &values[i];
+        if (word->size == 0 || (word->size == 4 && (memcmp(word->text, "NULL", 4) == 0 ||
+                                                    memcmp(word->text, "null", 4) == 0))) {
+            continue;
+        }
+        if (i < 4 || i == 7) {
+            int64_t value;
+            if (!signed_integer(*word, &value)) {
+                return false;
+            }
+            if (i == 7) {
+                if (value < INT32_MIN || value > INT32_MAX) {
+                    return false;
+                }
+                ohlc_put_u32(encoded + 56, (uint32_t)value);
+            } else {
+                ohlc_put_u64(encoded + i * 8, (uint64_t)value);
+            }
+        } else {
+            uint64_t value;
+            if (!ohlc_shell_uint(word, UINT64_MAX, &value)) {
+                return false;
+            }
+            ohlc_put_u64(encoded + i * 8, value);
+        }
+        flags |= 1u << i;
+    }
+    ohlc_put_u32(encoded + 60, flags);
+    ohlc_row_decode(encoded, row);
     return true;
 }
 
