@@ -22,8 +22,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-PORTS = {"ohlc": 18765, "mysql": 13306, "clickhouse": 18123, "influxdb": 18086}
-BACKENDS = tuple(PORTS)
+PORTS = {"ohlc": 18765, "mysql": 13306, "clickhouse": 18123, "influxdb": 18086, "aerospike": 13000}
+BACKENDS = ("ohlc", "clickhouse", "influxdb", "aerospike")
 FIELDS = ("open", "high", "low", "close", "volume", "amount", "adjust_factor")
 BASE_MINUTE = 29803050
 SERVER_CPUS = "0-15"
@@ -39,6 +39,22 @@ def minute_key(minute):
 def execute(arguments, **options):
     return subprocess.run([str(value) for value in arguments], check=True,
                           text=True, capture_output=True, **options).stdout
+
+
+def aerospike_info(command):
+    payload = (command + "\n").encode()
+    with socket.create_connection(("127.0.0.1", PORTS["aerospike"]), timeout=30) as connection:
+        connection.sendall(bytes((2, 1)) + len(payload).to_bytes(6, "big") + payload)
+        def receive(size):
+            data = bytearray()
+            while len(data) < size:
+                part = connection.recv(size - len(data))
+                if not part:
+                    raise RuntimeError("Truncated Aerospike info response")
+                data.extend(part)
+            return data
+        header = receive(8)
+        return receive(int.from_bytes(header[2:], "big")).decode()
 
 
 def write_private(path, contents):
@@ -315,11 +331,52 @@ performance_schema=ON
     <result_rows>0</result_rows><read_rows>0</read_rows><execution_time>0</execution_time></interval></default></quotas>
 </clickhouse>
 """)
-        if not (mysql / "auto.cnf").exists():
-            output = execute(["/usr/sbin/mysqld", "--no-defaults", "--initialize-insecure",
-                              f"--datadir={mysql}", f"--log-error={self.results}/mysql-initialize.log"],
-                             timeout=180)
-            (self.results / "mysql-initialize.stdout").write_text(output)
+        aerospike = self.work / "aerospike"
+        (aerospike / "lua").mkdir(exist_ok=True)
+        (aerospike / "smd").mkdir(exist_ok=True)
+        write_private(self.work / "aerospike.conf", f"""service {{
+    cluster-name ohlc-benchmark
+    proto-fd-max 65536
+    service-threads 16
+    work-directory {aerospike}
+}}
+logging {{
+    console {{
+        context any warning
+    }}
+}}
+network {{
+    service {{
+        address 127.0.0.1
+        port {PORTS['aerospike']}
+    }}
+    heartbeat {{
+        mode mesh
+        address 127.0.0.1
+        port 13002
+        interval 150
+        timeout 10
+    }}
+    fabric {{
+        address 127.0.0.1
+        port 13001
+    }}
+}}
+mod-lua {{
+    user-path {aerospike}/lua
+}}
+namespace bench {{
+    replication-factor 1
+    default-ttl 0
+    indexes-memory-budget 16G
+    storage-engine device {{
+        file {aerospike}/data.dat
+        filesize 64G
+        direct-files true
+        flush-max-ms 1000
+    }}
+}}
+""")
         self.record("configured", stocks=self.stocks, times=self.times,
                     rows=self.stocks * self.times, server_cpus=SERVER_CPUS, client_cpus=CLIENT_CPUS,
                     service_memory_max_bytes=32 << 30)
@@ -334,6 +391,9 @@ performance_schema=ON
             return ["/usr/sbin/mysqld", f"--defaults-file={self.work}/mysql.cnf"]
         if backend == "clickhouse":
             return [self.root / "bin/clickhouse", "server", f"--config-file={self.work}/clickhouse.xml"]
+        if backend == "aerospike":
+            return [self.root / "aerospike/usr/bin/asd", "--foreground", "--config-file",
+                    self.work / "aerospike.conf"]
         return [self.root / "bin/influxdb2-2.9.1/influxd", "--http-bind-address",
                 f"127.0.0.1:{PORTS[backend]}", "--bolt-path", directory / "influxd.bolt",
                 "--sqlite-path", directory / "influxd.sqlite", "--engine-path", directory / "engine",
@@ -357,7 +417,7 @@ performance_schema=ON
                      "--setenv=GOMAXPROCS=16", *self.command(backend)]
         execute(arguments)
         self.running[backend] = unit
-        deadline = time.monotonic() + 180
+        deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
             try:
                 if backend == "mysql":
@@ -366,10 +426,20 @@ performance_schema=ON
                     self.clickhouse("SELECT 1")
                 elif backend == "influxdb":
                     self.http(backend, "/health")
+                elif backend == "aerospike":
+                    if "8.2.0.0" not in aerospike_info("build"):
+                        raise RuntimeError("Unexpected Aerospike version")
                 else:
                     with socket.create_connection(("127.0.0.1", PORTS[backend]), timeout=1):
                         pass
                 pid = int(execute(["systemctl", "show", unit, "--property=MainPID", "--value"]).strip())
+                group = execute(["systemctl", "show", unit, "--property=ControlGroup", "--value"]).strip()
+                control = Path("/sys/fs/cgroup") / group.lstrip("/")
+                limits = {name: (control / name).read_text().strip() for name in
+                          ("memory.max", "memory.swap.max", "cpuset.cpus.effective")}
+                if limits["memory.max"] != str(32 << 30) or limits["memory.swap.max"] != "0":
+                    raise RuntimeError("Database memory limits were not applied")
+                (self.results / f"{backend}-limits.json").write_text(json.dumps(limits, indent=2) + "\n")
                 return self.record("started", backend=backend, pid=pid,
                                    startup_ns=time.monotonic_ns() - started)
             except (RuntimeError, urllib.error.URLError, OSError, subprocess.CalledProcessError):
@@ -392,6 +462,8 @@ performance_schema=ON
         self.record("stopped", backend=backend)
 
     def create_schema(self, backend):
+        if backend == "aerospike":
+            return
         if backend == "mysql":
             sql = """CREATE DATABASE baseline;
 CREATE TABLE baseline.bars (
@@ -487,6 +559,9 @@ SETTINGS index_granularity=256, index_granularity_bytes=0,
             self.mysql("SET GLOBAL innodb_max_dirty_pages_pct=75")
         elif backend == "clickhouse":
             self.clickhouse("OPTIMIZE TABLE baseline.bars FINAL")
+        elif backend == "aerospike":
+            time.sleep(2)
+            (self.results / "aerospike-settled.txt").write_text(aerospike_info("namespace/bench"))
         else:
             deadline = time.monotonic() + 900
             previous = None
@@ -509,7 +584,7 @@ SETTINGS index_granularity=256, index_granularity_bytes=0,
         self.stage = "validation"
         expected = json.loads((self.results / "dataset.json").read_text())
         started = time.monotonic_ns()
-        if backend == "ohlc":
+        if backend in ("ohlc", "aerospike"):
             client = QueryDriver(self, backend)
             try:
                 points = range(self.times) if full else (0, self.times - 1)
@@ -541,7 +616,7 @@ SETTINGS index_granularity=256, index_granularity_bytes=0,
 
     def warm_reads(self, backend, smoke):
         self.stage = "warm"
-        lengths = sorted(set(min(self.times, value) for value in (1, 240, 2048, 8580)))
+        lengths = sorted(set(min(self.times, value) for value in (1, 240, 2048, self.times)))
         plan = [("S", length) for length in lengths] + [("X", 1)]
         randomizer = random.Random(20260927)
         client = QueryDriver(self, backend)
@@ -581,7 +656,7 @@ SETTINGS index_granularity=256, index_granularity_bytes=0,
         randomizer = random.Random(3102026)
         with (self.results / f"{backend}-cold.jsonl").open("w") as output:
             for kind, length in (("S", 240), ("S", self.times), ("X", 1)):
-                for repetition in range(5):
+                for repetition in range(3):
                     self.stop(backend)
                     eviction = evict_files(self.work / backend)
                     startup = self.start(backend)
@@ -599,6 +674,9 @@ SETTINGS index_granularity=256, index_granularity_bytes=0,
 
     def inventory(self, backend):
         self.stage = "inventory"
+        if backend == "aerospike":
+            for index, command in enumerate(("build", "namespace/bench", "sindex", "get-config:context=service", "get-config:context=namespace;id=bench")):
+                (self.results / f"aerospike-inspect-{index}.txt").write_text(aerospike_info(command))
         if backend == "mysql":
             queries = ("SELECT VERSION()", "SHOW GLOBAL VARIABLES", "SHOW GLOBAL STATUS",
                        "EXPLAIN SELECT time_key,open,high,low,close,volume,amount,adjust_factor "
@@ -673,19 +751,28 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--phase", required=True)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--stocks", type=int, default=10000)
+    parser.add_argument("--times", type=int, default=5000)
     parser.add_argument("--backends", nargs="+", choices=BACKENDS, default=list(BACKENDS))
     arguments = parser.parse_args()
     if not arguments.phase.replace("-", "").isalnum():
         parser.error("Use a simple phase name")
     experiment = Experiment(arguments.root, arguments.phase,
-                            64 if arguments.smoke else 10000, 512 if arguments.smoke else 8580)
+                            64 if arguments.smoke else arguments.stocks,
+                            512 if arguments.smoke else arguments.times)
     try:
         experiment.prepare_configs()
         if not (experiment.results / "dataset.json").exists():
             experiment.generate()
+        failures = []
         for backend in arguments.backends:
-            experiment.run_backend(backend, arguments.smoke)
-        experiment.record("completed", backends=arguments.backends)
+            try:
+                experiment.run_backend(backend, arguments.smoke)
+            except Exception as error:
+                failure = {"backend": backend, "error": str(error), "stage": experiment.stage}
+                failures.append(failure)
+                experiment.record("backend_failed", **failure)
+        experiment.record("completed", backends=arguments.backends, failed_cases=failures)
     except Exception as error:
         experiment.record("failed", error=str(error))
         raise

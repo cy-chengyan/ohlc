@@ -4,6 +4,14 @@
 #include <curl/curl.h>
 #include <mysql.h>
 
+#ifdef OHLC_BENCH_AEROSPIKE
+#include <aerospike/aerospike.h>
+#include <aerospike/aerospike_batch.h>
+#include <aerospike/aerospike_index.h>
+#include <aerospike/aerospike_query.h>
+#include <aerospike/as_operations.h>
+#endif
+
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -43,6 +51,9 @@ typedef struct {
     uint32_t times;
     unsigned port;
     ohlc_client* ohlc;
+#ifdef OHLC_BENCH_AEROSPIKE
+    aerospike* aerospike;
+#endif
     ohlc_table_info table;
     MYSQL* mysql;
     MYSQL_STMT* series;
@@ -274,9 +285,19 @@ static int local_error(void* context, char* output, unsigned int capacity) {
     return 1;
 }
 
+#ifdef OHLC_BENCH_AEROSPIKE
+#include "baseline_aerospike.h"
+#endif
+
 static void open_connection(connection* client, bool loading) {
     client->rows = calloc(MAX_ROWS, sizeof(*client->rows));
     require(client->rows != NULL, "Result allocation failed");
+#ifdef OHLC_BENCH_AEROSPIKE
+    if (strcmp(client->backend, "aerospike") == 0) {
+        open_aerospike(client, loading);
+        return;
+    }
+#endif
     if (strcmp(client->backend, "ohlc") == 0) {
         ohlc_connection_options options;
         ohlc_connection_options_init(&options);
@@ -370,6 +391,13 @@ static void open_connection(connection* client, bool loading) {
 }
 
 static void close_connection(connection* client) {
+#ifdef OHLC_BENCH_AEROSPIKE
+    if (client->aerospike != NULL) {
+        as_error error;
+        require(aerospike_close(client->aerospike, &error) == AEROSPIKE_OK, error.message);
+        aerospike_destroy(client->aerospike);
+    }
+#endif
     ohlc_client_close(client->ohlc);
     if (client->series != NULL) {
         mysql_stmt_close(client->series);
@@ -419,8 +447,22 @@ static void load(connection* client, const char* directory) {
         }
         require(fseeko(input, (off_t)offsets[column], SEEK_SET) == 0, "Input seek failed");
         require(fread(buffer.data + prefix_size, 1, bytes, input) == bytes, "Input read failed");
+        if (prefix_size != 0) {
+            require(bytes == (size_t)count * OHLC_WRITE_BYTES, "Invalid source batch length");
+            /* ClickHouse stores the seven populated fields; reserved is absent in this fixture. */
+            for (size_t i = 0; i < count; i++) {
+                memmove(buffer.data + prefix_size + i * 64u,
+                        buffer.data + prefix_size + i * OHLC_WRITE_BYTES, 64u);
+            }
+            bytes = (size_t)count * 64u;
+        }
         uint64_t begin = now_ns();
-        if (ohlc) {
+#ifdef OHLC_BENCH_AEROSPIKE
+        if (client->aerospike != NULL) {
+            write_aerospike(client, (const uint8_t*)buffer.data, count);
+        } else
+#endif
+            if (ohlc) {
             require(bytes == (size_t)count * OHLC_WRITE_BYTES, "Invalid OHLC batch length");
             uint64_t sequence = 0;
             require_ohlc(
@@ -730,6 +772,10 @@ static void read_queries(connection* client) {
         uint64_t started = now_ns();
         if (client->ohlc != NULL) {
             query_ohlc(client, cross, stock, first, length);
+#ifdef OHLC_BENCH_AEROSPIKE
+        } else if (client->aerospike != NULL) {
+            query_aerospike(client, cross, stock, first, length);
+#endif
         } else if (client->mysql != NULL) {
             query_mysql(client, cross, stock, first, length);
         } else {
@@ -783,6 +829,10 @@ static void* stress_thread(void* context) {
         uint64_t started = now_ns();
         if (client->ohlc != NULL) {
             query_ohlc(client, cross, stock, first, length);
+#ifdef OHLC_BENCH_AEROSPIKE
+        } else if (client->aerospike != NULL) {
+            query_aerospike(client, cross, stock, first, length);
+#endif
         } else if (client->mysql != NULL) {
             query_mysql(client, cross, stock, first, length);
         } else {

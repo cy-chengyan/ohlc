@@ -332,16 +332,19 @@ RPM 默认使用配置文件 `/etc/ohlc/ohlcd.conf`、数据库目录 `/var/lib/
 
 ## 验证与性能
 
-首版源码在 **RHEL 8 内核上的 EL8 用户态通过全部 11 项 CTest 检查**，覆盖存储、恢复、并发、
-C/Python/Java 接口、shell、TLS 和运维工具。源码基准、环境与证据见[测试报告](docs/test-report.md)。
+首版源码在 **EL8 与 EL9 均通过 11 项 CTest 检查**。EL8 包含 JDK 17/JNI；EL9 Release
+构建因系统默认 JDK 8 而跳过 Java。检查覆盖存储、恢复、并发、客户端、shell、TLS 和运维工具。
+源码基准、环境与证据见[测试报告](docs/test-report.md)。
 
-当前版本尚未进行性能测量。[设计文档](docs/design.md)中的容量数字是计算模型，
-不是吞吐量或延迟实测。基准工具见 [tests/baseline_driver.c](tests/baseline_driver.c)
+报告包含与 ClickHouse、InfluxDB、Aerospike 的 **5000 万条对照测试**，每个服务限制为
+32 GiB 内存。InfluxDB 在 16 客户端负载下触及上限；已完成测项与失败阶段分别报告。
+结果仅适用于报告中的配置和负载，[设计文档](docs/design.md)中的容量公式仍为计算模型。
+基准工具见 [tests/baseline_driver.c](tests/baseline_driver.c)
 和 [tools/baseline_compare.py](tools/baseline_compare.py)。
 
 ## Beta 版本范围
 
-- **Linux x86-64：** 源码已在 RHEL 8 内核上的 EL8 用户态完成回归验证。
+- **Linux x86-64：** EL8、EL9 源码回归通过；Java 验证来自 EL8/JDK 17。
 - **RHEL 8/9 软件包：** 提供构建配置；当前源码基准的包构建和安装验收待完成。
 - **Java：** API 面向 JDK 17 和 21，使用 Java 17 字节码；当前源码基准已通过 JDK 17 验证，
   JDK 21 完整验收待完成。

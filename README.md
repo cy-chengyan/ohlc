@@ -362,18 +362,22 @@ See the [storage diagram](docs/images/ohlc-storage-index-overview.svg),
 
 ## Validation and performance
 
-The first-release source passes all **11 CTest checks in EL8 userspace on a RHEL 8 kernel**,
-covering storage, recovery, concurrency, C/Python/Java interfaces, shell, TLS, and administration.
+The first-release source passes **11 CTest checks on EL8 and EL9**. EL8 validation includes
+JDK 17/JNI; the EL9 Release build skips Java because the default JDK is 8. Checks cover storage,
+recovery, concurrency, client interfaces, shell, TLS, and administration.
 See the [test report](docs/test-report.md) for the source reference, environment, and evidence.
 
-Performance has not been measured for this release. The [design](docs/design.md) provides
-capacity calculations, not measured throughput or latency. Benchmark tools are available in
+The report includes a **50-million-row comparison with ClickHouse, InfluxDB, and Aerospike**,
+with a 32 GiB memory limit per server. InfluxDB hits that limit during the 16-client workload;
+completed measurements and failed stages are reported separately. Results apply to the documented
+configuration and workload; the [design](docs/design.md) capacity formulas remain calculations.
+Benchmark tools are available in
 [tests/baseline_driver.c](tests/baseline_driver.c) and
 [tools/baseline_compare.py](tools/baseline_compare.py).
 
 ## Beta scope
 
-- **Linux x86-64:** source regression tests pass in EL8 userspace on a RHEL 8 kernel.
+- **Linux x86-64:** source regression tests pass on EL8 and EL9; Java coverage is from EL8/JDK 17.
 - **RHEL 8/9 packages:** build definitions are provided; package builds and installation acceptance
   remain pending for this source baseline.
 - **Java:** the API targets JDK 17 and 21 with Java 17 bytecode; this source baseline has been
