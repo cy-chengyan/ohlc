@@ -1002,3 +1002,46 @@ clang-format 21.1.8、Python 语法及 diff 空白检查通过。
 [局域网检查](../build/acceptance/rpm-closed-series-20260928/lan-check.json)、
 [验收元数据](../build/acceptance/rpm-closed-series-20260928/validation.json)。
 EL8 验证使用 UBI 用户空间并共享 RHEL 9 内核；本次没有性能、ARM64 或真实断电验收，RPM 未签名。
+
+## Release 9 自定义目录与 Java 双版本验收（2026-10-11）
+
+本次为 `0.1.0~beta.1-9`，基于提交 `3322c64` 加工作区修订。服务配置改为
+`ProtectSystem=full`，Java RPM 依赖接受 `java-17-headless` 或 `java-21-headless`。
+磁盘格式 5、协议 5、C ABI 3 保持不变。源码包内的 `SOURCE_MANIFEST.sha256` 记录精确源文件摘要。
+
+构建和安装验证均在一次性 x86-64 容器内执行，使用官方 UBI 8/9 用户空间和对应 systemd，
+共享宿主机的 RHEL 8 内核 `4.18.0-553.111.1.el8_10.x86_64`。未修改宿主机服务、安装包或数据库。
+
+| 检查 | EL8 | EL9 |
+|---|---|---|
+| RPM 构建及 spec 检查 | 11/11 项通过 | 11/11 项通过 |
+| 包集合 | 8 个功能包、7 个调试包、1 个 SRPM | 8 个功能包、7 个调试包、1 个 SRPM |
+| 默认数据目录 | 已安装服务启动、PING、stats 通过 | 同左 |
+| 旧限制复现 | 自定义目录配置检查通过，但 `strict` 启动报 I/O error | 同左 |
+| 自定义数据目录 | `full` 下无需 ReadWritePaths，写入、读取、重启后结果一致 | 同左 |
+| 目录权限边界 | root 所有的 0700 目录拒绝启动；恢复属主后数据可读 | 同左 |
+| JDK 17 开发和运行 | 已安装 JAR 的编译、网络、TLS、JNI 和示例通过 | 同左 |
+| JDK 21 开发和运行 | 已安装 JAR 的编译、网络、TLS、JNI 和示例通过 | 同左 |
+| 仅 JDK 21 的安装 | 删除 Java 17 包后，RPM 依赖检查及正常安装通过 | 同左 |
+
+Java 验证使用 OpenJDK `17.0.20.1` 和 `21.0.12.1`。JAR 的全部 19 个 class 文件均为
+major version 61、minor version 0，即 Java 17 字节码且不使用预览特性；两种 JDK 使用同一份
+平台内已安装 JAR。JNI 验证启用 `-Xcheck:jni`，覆盖直接缓冲、UTF-8、关闭竞态与重开恢复。
+回归入口为 `tests/rpm_data_directory.sh` 和 `tests/rpm_java_compatibility.sh`，只用于隔离容器。
+首次 Java 安装验证发现既有嵌入式测试假定工具与库同目录；测试驱动通过临时符号链接适配
+RPM 的 `/usr/bin` 与 `/usr/lib64` 布局后，四组验证全部通过，未修改产品实现。
+
+制品位于 `dist/ohlc-0.1.0-beta.1-9/`：`rpm/el8/` 与 `rpm/el9/` 为功能包，
+`debug/` 为调试包，`source/` 为源码与 SRPM，`java/` 提供独立 JAR；根目录及功能包目录
+均附 SHA-256 清单。RPM 未签名。本次未进行宿主机升级、RHEL 9 内核、ARM64、
+SELinux enforcing、性能或真实断电验收。
+
+证据：[环境](../build/acceptance/rpm-release9-20261011/environment.json)、
+[EL8 构建](../build/acceptance/rpm-release9-20261011/build-el8.log)、
+[EL9 构建](../build/acceptance/rpm-release9-20261011/build-el9.log)、
+[EL8 服务](../build/acceptance/rpm-release9-20261011/service-el8.log)、
+[EL9 服务](../build/acceptance/rpm-release9-20261011/service-el9.log)、
+[EL8 Java 17](../build/acceptance/rpm-release9-20261011/java17-el8.log)、
+[EL8 Java 21](../build/acceptance/rpm-release9-20261011/java21-el8.log)、
+[EL9 Java 17](../build/acceptance/rpm-release9-20261011/java17-el9.log)、
+[EL9 Java 21](../build/acceptance/rpm-release9-20261011/java21-el9.log)。

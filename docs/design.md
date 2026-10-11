@@ -1085,6 +1085,9 @@ uint32 数值以 long 暴露或提供无符号访问函数；uint64 amount 保�
 
 `Ohlc` 直接实现二进制网络协议；`Database` 通过 `libohlc_jni` 调用 `libohlc` 提供嵌入式方式。
 最低版本均为 Java 17。网络方式不加载 JNI；嵌入式方式不建立连接，两个入口均随 `ohlc-client.jar` 发布。
+同一份 JAR 支持 JDK 17 和 JDK 21 开发及运行，构建固定使用 `javac --release 17`，
+不使用高于 Java 17 的 API 或预览特性。RPM 运行依赖接受 `java-17-headless` 或
+`java-21-headless`，已有对应提供者时不强制另装 JDK 17；JDK 的安装位置由调用方选择。
 `Database.Options.defaults()` 从 C 内核取得默认预算。
 
 嵌入式写入借用 direct ByteBuffer；heap ByteBuffer 一次复制到 direct 缓冲，保持源 position 不变。
@@ -1943,8 +1946,10 @@ ctest --test-dir build-tsan -R concurrency --output-on-failure
 同一部署使用同一发布版本的头文件、运行库和语言封装。磁盘格式或 ABI 发生不兼容变化时，
 必须更改对应编号并明确数据重建或迁移要求。
 
-RHEL 8、9 分别构建 x86-64 RPM。RHEL 9 已完成实机运行与安装验收；RHEL 8 的验收环境是
-官方 UBI 8 用户空间及其 systemd，共享 RHEL 9 内核。独立 RHEL 8 内核与 Linux ARM64 尚未验证。
+RHEL 8、9 分别构建 x86-64 RPM。此前已完成 RHEL 9 实机运行与安装验收，以及共享 RHEL 9
+内核的 UBI 8 验收。Release 9 使用官方 UBI 8/9 用户空间及其 systemd，共享 RHEL 8 内核，
+已验证自定义目录启动与 JDK 17/21；本次未在宿主机安装或升级 RPM。
+结果见 [Release 9 验收](test-report.md#release-9-自定义目录与-java-双版本验收2026-10-11)。
 Linux ARM64 保留源码构建支持，不提供已验收的 ARM64 二进制。
 SELinux enforcing、FIPS 与真实断电/设备故障均不在已验证范围内。
 
@@ -1958,7 +1963,7 @@ SELinux enforcing、FIPS 与真实断电/设备故障均不在已验证范围内
 | `ohlc-client` | 交互式与脚本 shell `ohlc` | 同版本网络库 |
 | `ohlc-devel` | 两套 C 头文件、链接符号、pkg-config 与 CMake 元数据 | 同版本两套运行库 |
 | `python3-ohlc` | `Connection` 与 `Database`，纯 Python 的 ctypes 封装 | Python 3.9+、同版本网络与核心库 |
-| `ohlc-java` | Java 17 JAR，网络与嵌入式 API 类 | Java 17 |
+| `ohlc-java` | Java 17 字节码 JAR，网络与嵌入式 API 类 | Java 17 或 Java 21 运行时 |
 | `ohlc-jni` | 嵌入式 JNI 桥接库 | 同版本核心库和 Java 包 |
 
 调试符号和源码 RPM 由 RPM 构建工具生成。服务不会因包依赖而安装 Python 或 JVM。
@@ -2004,9 +2009,29 @@ systemctl status ohlc
 journalctl -u ohlc
 ```
 
-systemd 采用只读系统目录、私有临时目录、禁止提权等限制，允许写入状态与运行目录。
-将数据迁往 `/ssd02` 等自定义路径时，管理员创建归属 ohlc 的目录，修改配置，并通过
-`systemctl edit ohlc` 增加 `[Service]` 下的 `ReadWritePaths=/ssd02/实际目录`；不要关闭全部隔离。
+RPM Release 9 起，systemd 使用 `ProtectSystem=full`，将 `/usr`、`/boot`、`/etc` 保持只读，
+保留私有临时目录、禁止提权等限制。其他路径按服务账户的文件权限控制写入；相比此前的
+`strict`，可写范围不再仅限于状态目录、运行目录及显式放行路径。
+自定义数据目录不再要求额外设置 `ReadWritePaths`。管理员先创建归属 `ohlc:ohlc`、权限 0700
+的数据目录，确保父目录可遍历，再修改 `/etc/ohlc/ohlcd.conf` 的 `data` 并重启服务。
+`ProtectHome=true` 仍阻止访问 `/home`、`/root` 和 `/run/user`，数据目录不要放在这些位置。
+例如使用 `/data01/ohlc/database`：
+
+```bash
+install -d -m0700 -o ohlc -g ohlc /data01/ohlc /data01/ohlc/database
+```
+
+若目录位于单独挂载的数据盘，还应通过 `systemctl edit ohlc` 添加挂载依赖，防止在挂载前启动：
+
+```ini
+[Unit]
+RequiresMountsFor=/data01/ohlc/database
+```
+
+修改后执行 `systemctl daemon-reload` 和 `systemctl restart ohlc`。
+`--check-config` 只验证配置，不检查服务隔离后的实际写权限；若日志出现
+`Open database: I/O error`，应同时检查目录权限、挂载状态及 `systemctl cat ohlc` 中的覆盖配置。
+旧 drop-in 若仍设为 `ProtectSystem=strict`，需同步调整或显式放行数据目录。
 服务文件描述符软硬上限为 65,536，线程上限为 2,048。引擎内存预算不是进程 RSS 总上限，
 需为网络缓冲、线程栈、JVM/Python 和操作系统页缓存另留内存。
 

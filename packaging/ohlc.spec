@@ -6,7 +6,7 @@
 
 Name:           ohlc
 Version:        0.1.0~beta.1
-Release:        8%{?dist}
+Release:        9%{?dist}
 Summary:        Fixed-row OHLC storage engine and service
 License:        Apache-2.0
 URL:            https://github.com/cy-chengyan/ohlc
@@ -85,9 +85,9 @@ embedded Database APIs. Requires Python 3.9 or later.
 %package java
 Summary:        OHLC Java network and embedded API classes
 BuildArch:      noarch
-Requires:       java-17-openjdk-headless
+Requires:       (java-17-headless or java-21-headless)
 %description java
-Java 17 network client and embedded API. Network access needs no native library;
+Java 17/21 network client and embedded API. Network access needs no native library;
 install ohlc-jni additionally to open local database files.
 
 %package jni
@@ -193,6 +193,11 @@ getent passwd ohlc >/dev/null || \
 %{_libdir}/libohlc_jni.so
 
 %changelog
+* Sun Oct 11 2026 OHLC contributors - 0.1.0~beta.1-9
+- Allow service-owned custom data directories with ProtectSystem=full.
+- Document data directory permissions and separate mount dependencies.
+- Accept Java 17 or Java 21 runtimes without forcing a Java 17 installation.
+
 * Mon Sep 28 2026 OHLC contributors - 0.1.0~beta.1-8
 - Unify public series queries to inclusive start and end bounds.
 - Update the network protocol to 5 and C ABI to 3; retain disk format 5.
