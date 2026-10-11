@@ -377,11 +377,11 @@ Benchmark tools are available in
 
 ## Beta scope
 
-- **Linux x86-64:** source regression tests pass on EL8 and EL9; Java coverage is from EL8/JDK 17.
-- **RHEL 8/9 packages:** build definitions are provided; package builds and installation acceptance
-  remain pending for this source baseline.
-- **Java:** the API targets JDK 17 and 21 with Java 17 bytecode; this source baseline has been
-  validated with JDK 17. Complete JDK 21 acceptance remains pending.
+- **Linux x86-64:** source regression tests pass on EL8 and EL9.
+- **RHEL 8/9 packages:** release `10` passes RPM builds and installation checks in EL8/EL9
+  containers on a RHEL 8 host kernel, including service startup and custom data directories.
+- **Java:** the same Java 17 bytecode JAR passes development, network, TLS and JNI checks
+  with JDK 17 and 21 on both package platforms.
 - **Linux ARM64 and macOS:** source build paths are provided; runtime acceptance remains pending.
 
 This beta has no per-row delete, automatic data compaction, replication, clustering, or shared

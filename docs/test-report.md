@@ -69,6 +69,30 @@ EL9 Release 构建的 CTest **11/11 通过**，总用时 8.86 秒；该构建检
 | `git diff --check` | 通过 |
 | 四库原生驱动编译 | EL9、GNU C17、Aerospike C SDK 7.5.0，严格警告作为错误 |
 
+### 3.1 RPM 发布验收
+
+2026-10-11 对当前产品实现构建 `0.1.0~beta.1-10.el8/el9` x86-64 RPM。
+UBI/EL8 与 UBI/EL9 容器共用 RHEL 8 内核 `4.18.0-553.111.1.el8_10.x86_64`；
+使用 GCC 8.5.0 / 11.5.0、RelWithDebInfo、系统 OpenSSL 及 JDK 17。
+两平台的 RPM `%check` 均通过全部 11 项 CTest，明确包含 Java/JNI。
+
+| 安装后检查 | EL8 | EL9 |
+|---|---|---|
+| 八个功能包安装及 RPM 摘要校验 | 通过 | 通过 |
+| 默认目录启动、自定义目录写入/查询/重启 | 通过 | 通过 |
+| `ProtectSystem=strict` 失败复现、`full` 修复、服务账户权限约束 | 通过 | 通过 |
+| 安装后的 C、Python、pkg-config、CMake 接口 | 通过 | 通过 |
+| 离线检查、备份及恢复 | 通过 | 通过 |
+| JDK 17 / JDK 21 编译、网络、TLS、JNI | 通过 | 通过 |
+| 仅有 JDK 21 时 Java RPM 依赖满足及安装 | 通过 | 通过 |
+| 全部 20 个 JAR 类为 Java 17 字节码、无预览特性 | 通过 | 通过 |
+| 可执行文件及共享库无构建目录 RPATH/RUNPATH | 通过 | 通过 |
+
+原始构建、服务、语言接口日志及已验收程序摘要位于
+`build/acceptance/rpm-release10-20261011/`。最终制品收集时核对程序、systemd 单元及
+JAR 内容与这些摘要一致，并核对随包文档与仓库一致。RPM 未签名，交付 SHA-256 清单。
+安装测试使用隔离容器，不代表独立 EL9 内核、生产主机或 SELinux enforcing 验收。
+
 ## 4. 五千万条四库基准
 
 ### 4.1 环境与资源限制
@@ -220,8 +244,8 @@ Aerospike 设备存储与二级索引模式完成 16 客户端负载，重开重
 
 ## 5. 未完成的验收
 
-JDK 21 完整运行、EL9 Java/JNI、ASan/UBSan、当前源码 RPM 构建与安装、生产 systemd 部署、
-Linux ARM64、macOS、SELinux enforcing、FIPS、真实断电与设备故障均未在本次验证。
+ASan/UBSan、独立 EL9 内核上的 RPM 安装、生产 systemd 部署、Linux ARM64、macOS、
+SELinux enforcing、FIPS、真实断电与设备故障均未在本次验证。
 
 20 年目标规模、多表持续高压、并发读写、历史补录与修正、证券生命周期、跨主机 TLS 性能
 需要独立测量。本报告的单机稠密初始导入与只读负载不能替代这些验收；

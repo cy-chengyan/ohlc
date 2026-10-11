@@ -1994,8 +1994,8 @@ ctest --test-dir build-tsan -R concurrency --output-on-failure
 同一部署使用同一发布版本的头文件、运行库和语言封装。格式和 ABI 编号用于校验接口与文件，
 不是产品发行次数。验证使用新建数据库。
 
-仓库提供 RHEL 8、9 的 x86-64 RPM 构建配置；当前源码的包构建与安装验收尚未完成。
-EL8 用户态已在 RHEL 8 内核上完成源码回归；其他平台及 JDK 21 的完整验收待执行。
+RHEL 8、9 的 x86-64 RPM 已完成构建和隔离容器安装验收，RPM 发布号为 `10`。
+EL8/EL9 用户态均在 RHEL 8 宿主内核上验证；同一份 JAR 的 JDK 17/21 网络、TLS 和 JNI 验收通过。
 Linux ARM64 提供源码构建入口，不提供已验收的 ARM64 二进制。
 已验证范围及待完成项见 [测试报告](test-report.md)。
 
@@ -2020,7 +2020,7 @@ Java 网络访问仅需 JAR；嵌入式访问另安装 JNI。RHEL 8 的 Python �
 
 ### 22.3 安装与服务管理
 
-交付目录约定为 `dist/ohlc-0.1.0-beta.1/`，其中 `rpm/el8/` 与 `rpm/el9/` 各放置 8 个功能包；
+交付目录为 `dist/ohlc-0.1.0-beta.1-10/`，其中 `rpm/el8/` 与 `rpm/el9/` 各放置 8 个功能包；
 调试包位于 `debug/`，SRPM 和源码包位于 `source/`，JAR 位于 `java/`。
 根目录 `SHA256SUMS` 校验全部制品，各 RPM 目录也提供独立清单。
 取得当前源码构建的制品后，在对应系统版本的 RPM 目录执行以下命令。未签名的本地 beta 包使用一次性的 `--nogpgcheck`，
