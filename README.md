@@ -18,7 +18,7 @@ and an interactive command shell.
 [RHEL packages](#rhel-packages) · [Benchmarks](#benchmarks) ·
 [Design](docs/design.md) · [Test report](docs/test-report.md)
 
-Current development format: **disk 6 / protocol 6 / C ABI 4**. Earlier disk formats are unsupported; no migration is provided.
+Current development format: **disk 6 / protocol 6 / C ABI 4**. Only the current layout is implemented; no format conversion or migration is provided.
 Update the server, libraries, and bindings together: rows now use the nullable 64-byte format.
 
 ## What it provides
@@ -192,8 +192,6 @@ are queried. C, Python and Java series APIs use the same inclusive endpoints.
 `drop TABLE;` permanently deletes a table and its rows; see `help drop;`. Existing queries
 finish on their original snapshots before files are reclaimed. Recreating the name assigns
 a new table ID. C, Python, and Java also provide table deletion in both access modes.
-After using table deletion, keep this release or a newer one; older releases cannot read the
-deletion records. The current release requires disk format 6.
 
 ## Client libraries
 

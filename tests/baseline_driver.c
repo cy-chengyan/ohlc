@@ -617,14 +617,12 @@ static void decode_influx(connection* client, bool cross) {
         uint64_t key = cross ? values[0] : values[0] / 60u;
         require(key <= UINT32_MAX && (cross || values[0] % 60u == 0), "Invalid result timestamp");
         for (size_t i = 1; i <= 4; i++) {
-            require(values[i] <= INT32_MAX, "Unexpected generated price");
+            require(values[i] <= INT64_MAX, "Unexpected generated price");
         }
-        require(values[5] <= UINT32_MAX && values[7] <= UINT32_MAX, "Result integer overflow");
         client->rows[client->count++] = (result_row){
             .key = (uint32_t)key,
-            .value = {(int32_t)values[1], (int32_t)values[2], (int32_t)values[3],
-                      (int32_t)values[4], (uint32_t)values[5], values[6], (uint32_t)values[7], 0,
-                      OHLC_FIELDS_MARKET},
+            .value = {(int64_t)values[1], (int64_t)values[2], (int64_t)values[3],
+                      (int64_t)values[4], values[5], values[6], values[7], 0, OHLC_FIELDS_MARKET},
         };
     }
 }
@@ -635,39 +633,27 @@ static void query_http(connection* client, bool cross, uint32_t stock, uint32_t 
     uint32_t start = time_key(first);
     uint32_t end = time_key(first + length - 1u) + 1u;
     if (strcmp(client->backend, "clickhouse") == 0) {
+        /* The fixture omits reserved; emit its zero payload and market validity bits
+         * to decode the selected 64-bit fields with the current row codec. */
         if (cross) {
             snprintf(sql, sizeof(sql),
-                     "SELECT ticker,open,high,low,close,volume,amount,adjust_factor "
+                     "SELECT ticker,open,high,low,close,volume,amount,adjust_factor,"
+                     "toInt32(0),toUInt32(%u) "
                      "FROM bars WHERE time_key=%" PRIu32 " FORMAT RowBinary",
-                     start);
+                     OHLC_FIELDS_MARKET, start);
         } else {
             snprintf(sql, sizeof(sql),
-                     "SELECT time_key,open,high,low,close,volume,amount,adjust_factor "
+                     "SELECT time_key,open,high,low,close,volume,amount,adjust_factor,"
+                     "toInt32(0),toUInt32(%u) "
                      "FROM bars WHERE ticker=%" PRIu32 " AND time_key>=%" PRIu32
                      " AND time_key<%" PRIu32 " ORDER BY time_key FORMAT RowBinary",
-                     stock, start, end);
+                     OHLC_FIELDS_MARKET, stock, start, end);
         }
         http_request(client, "/?database=baseline&use_query_cache=0&use_query_condition_cache=0",
                      sql, strlen(sql));
-        /* The comparison fixture uses its own original 36-byte RowBinary schema. */
-        require(client->response.size % 36u == 0, "Invalid ClickHouse result length");
-        size_t count = client->response.size / 36u;
-        require(count <= MAX_ROWS - client->count, "Too many result rows");
-        for (size_t i = 0; i < count; i++) {
-            const uint8_t* bytes = (const uint8_t*)client->response.data + i * 36u;
-            result_row* row = &client->rows[client->count++];
-            row->key = little_u32(bytes);
-            row->value = (ohlc_row){
-                .open = little_u32(bytes + 4),
-                .high = little_u32(bytes + 8),
-                .low = little_u32(bytes + 12),
-                .close = little_u32(bytes + 16),
-                .volume = little_u32(bytes + 20),
-                .amount = little_u32(bytes + 24) | ((uint64_t)little_u32(bytes + 28) << 32),
-                .adjust_factor = little_u32(bytes + 32),
-                .flags = OHLC_FIELDS_MARKET,
-            };
-        }
+        require(client->response.size % OHLC_RESULT_BYTES == 0, "Invalid ClickHouse result length");
+        append_binary(client, (const uint8_t*)client->response.data,
+                      client->response.size / OHLC_RESULT_BYTES);
         return;
     }
     if (cross) {

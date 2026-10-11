@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Reproduce the edition-1 comparison in a dedicated Linux /ssd02 directory."""
+"""Run the current-format comparison in a dedicated Linux /ssd02 directory."""
 
 import argparse
 import ctypes
@@ -396,8 +396,9 @@ performance_schema=ON
             sql = """CREATE DATABASE baseline;
 CREATE TABLE baseline.bars (
     ticker INT UNSIGNED NOT NULL, time_key INT UNSIGNED NOT NULL,
-    `open` INT NOT NULL, high INT NOT NULL, low INT NOT NULL, `close` INT NOT NULL,
-    volume INT UNSIGNED NOT NULL, amount BIGINT UNSIGNED NOT NULL, adjust_factor INT UNSIGNED NOT NULL,
+    `open` BIGINT NOT NULL, high BIGINT NOT NULL, low BIGINT NOT NULL, `close` BIGINT NOT NULL,
+    volume BIGINT UNSIGNED NOT NULL, amount BIGINT UNSIGNED NOT NULL,
+    adjust_factor BIGINT UNSIGNED NOT NULL,
     PRIMARY KEY (ticker, time_key),
     KEY by_time (time_key, ticker, `open`, high, low, `close`, volume, amount, adjust_factor)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC;"""
@@ -405,8 +406,8 @@ CREATE TABLE baseline.bars (
         elif backend == "clickhouse":
             self.clickhouse("CREATE DATABASE baseline")
             sql = """CREATE TABLE baseline.bars (
-    ticker UInt32, time_key UInt32, open Int32, high Int32, low Int32, close Int32,
-    volume UInt32, amount UInt64, adjust_factor UInt32,
+    ticker UInt32, time_key UInt32, open Int64, high Int64, low Int64, close Int64,
+    volume UInt64, amount UInt64, adjust_factor UInt64,
     PROJECTION by_time (SELECT * ORDER BY (time_key,ticker))
 ) ENGINE=MergeTree ORDER BY (ticker,time_key)
 SETTINGS index_granularity=256, index_granularity_bytes=0,

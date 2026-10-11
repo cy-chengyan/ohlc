@@ -1079,3 +1079,20 @@ RPM spec 已递增至 Release 10，属于待打包的源码元数据。
 [EL9 回归](../build/acceptance/wide-row-20261011/test-el9.log)、
 [ASan/UBSan 与辅助工具检查](../build/acceptance/wide-row-20261011/asan.log)、
 [同一 JAR 的 JDK 21 验证](../build/acceptance/wide-row-20261011/java21-same-jar.log)。
+
+## 当前格式清理验收（2026-10-11）
+
+移除 catalog 高水位为零时推算表号的编码与读取分支，统一保存显式 last_table_id。
+文件头只匹配当前完整 magic；生命周期统计要求明确的 64 B 行与 8192 B 块参数。
+辅助对比基准使用 64 位行情列和当前行解码器，不再解析 36 B 的旧宽度结果。
+
+- EL8 用户态增量编译与 CTest **11/11 通过**，含 core、并发、流水线、同步失败、
+  WAL 回收崩溃、Python/Java 嵌入式与网络、shell、TLS、配置、备份恢复。
+- 新增 catalog 检查：新库检查点重开保留表号；两个检查点的 catalog 高水位被置零、
+  且 CRC 重新计算正确时，打开仍返回 `CORRUPT`，不推算或修复表号。
+- 版本校验测试改为未知版本，不再构造旧版本数据或协议。
+- baseline_driver 在 EL9 用户态通过严格 C 编译检查；未运行 MySQL/ClickHouse 实例或性能测量。
+- clang-format 21.1.8、变更 Python 文件语法和补丁空白检查通过。
+
+本次仅编译验证，未打包或安装。EL8 容器沿用上一节环境。
+证据：[EL8 编译与回归日志](../build/acceptance/current-format-20261011/test-el8.log)。

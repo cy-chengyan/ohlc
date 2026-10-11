@@ -46,15 +46,15 @@ ohlc_status ohlc_storage_header(ohlc_db* db, int fd, uint32_t type, uint32_t tab
     }
     uint32_t checksum = ohlc_get_u32(header + 4092);
     ohlc_put_u32(header + 4092, 0);
-    if (memcmp(header, "OHLCFIL", 7) != 0 || checksum != ohlc_crc32c(0, header, sizeof(header))) {
+    if (memcmp(header, "OHLCFIL6", 8) != 0 || checksum != ohlc_crc32c(0, header, sizeof(header))) {
         return OHLC_CORRUPT;
     }
     if (ohlc_get_u32(header + 8) != OHLC_FORMAT_VERSION) {
         return OHLC_UNSUPPORTED;
     }
-    if (header[7] != '6' || ohlc_get_u32(header + 12) != type ||
-        memcmp(header + 16, db->uuid, 16) != 0 || ohlc_get_u32(header + 32) != table ||
-        ohlc_get_u32(header + 36) != volume || ohlc_get_u32(header + 40) != OHLC_BLOCK_BYTES ||
+    if (ohlc_get_u32(header + 12) != type || memcmp(header + 16, db->uuid, 16) != 0 ||
+        ohlc_get_u32(header + 32) != table || ohlc_get_u32(header + 36) != volume ||
+        ohlc_get_u32(header + 40) != OHLC_BLOCK_BYTES ||
         ohlc_get_u32(header + 44) != OHLC_ROW_BYTES || ohlc_get_u32(header + 48) != 16 ||
         ohlc_get_u32(header + 52) != 8 || ohlc_get_u32(header + 56) != 128 ||
         ohlc_get_u32(header + 60) != 0) {

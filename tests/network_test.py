@@ -328,11 +328,11 @@ def main():
                 peer.connect(socket_path)
                 peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 6, 1, 0, 0xffffffff, 1, 0, 0))
                 assert peer.recv(1) == b""
-            # Protocol 4 used an exclusive end and must not be silently accepted.
+            # Unknown protocol versions are rejected before processing requests.
             with socket.socket(socket.AF_UNIX) as peer:
                 peer.settimeout(5)
                 peer.connect(socket_path)
-                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 5, 1, 0, 0, 1, 0, 0))
+                peer.sendall(struct.pack("<4sHHIIQII", b"OHLC", 0xffff, 1, 0, 0, 1, 0, 0))
                 assert peer.recv(1) == b""
         finally:
             process.send_signal(signal.SIGTERM)

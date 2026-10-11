@@ -792,11 +792,7 @@ static ohlc_status save_catalog(ohlc_db* db, const ohlc_root* root, uint64_t* of
     ohlc_put_u64(payload + 8, root->ticker_count);
     ohlc_put_u64(payload + 16, 0);
     ohlc_put_u32(payload + 24, root->table_count);
-    /* Zero retains the original dense catalog encoding. A nonzero high-water
-     * ID marks a sparse catalog that older readers must reject. */
-    if (root->last_table_id != root->table_count) {
-        ohlc_put_u32(payload + 28, root->last_table_id);
-    }
+    ohlc_put_u32(payload + 28, root->last_table_id);
     size_t position = 32;
     for (uint64_t id = 1; id <= root->last_table_id; id++) {
         const ohlc_table* table = ohlc_root_table(root, (uint32_t)id);
@@ -847,9 +843,7 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
     uint64_t ticker_count = ohlc_get_u64(payload + 8);
     uint32_t table_count = ohlc_get_u32(payload + 24);
     uint32_t last_table_id = ohlc_get_u32(payload + 28);
-    if (last_table_id == 0) {
-        last_table_id = table_count;
-    } else if (last_table_id < table_count) {
+    if (last_table_id < table_count) {
         status = OHLC_CORRUPT;
         goto cleanup;
     }

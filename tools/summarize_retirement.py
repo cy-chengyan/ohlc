@@ -42,6 +42,8 @@ def summarize_case(directory):
     only_event(events, "temporary_data_removed")
     configuration = json.loads((directory / "fixture.json").read_text())
     layout = json.loads((directory / "model.json").read_text())
+    if layout["row_bytes"] != 64 or layout["block_bytes"] != 8192:
+        raise ValueError("Expected 64-byte rows and 8192-byte data blocks")
     lives = [tuple(map(int, line.split())) for line in
              (directory / "lifetimes.tsv").read_text().splitlines()]
     if any(stock != index for index, (stock, _, _) in enumerate(lives)):
@@ -105,7 +107,7 @@ def summarize_case(directory):
         cold[label]["max_remaining_pages"] = max(row["eviction"]["resident_after"]
                                                    for row in first_queries)
         cold[label]["read_bytes_per_payload_byte"] = (
-            cold[label]["read_bytes"]["median"] / (expected * layout.get("row_bytes", 32)))
+            cold[label]["read_bytes"]["median"] / (expected * layout["row_bytes"]))
 
     files = json.loads((directory / "ohlc-files.json").read_text())
     categories = {"data": 0, "metadata": 0, "index": 0, "catalog": 0, "wal": 0, "other": 0}
@@ -114,9 +116,9 @@ def summarize_case(directory):
         path = Path(entry["path"])
         if path.name.startswith("data-") and path.suffix == ".dat":
             key = "data"
-            if (entry["logical"] - 4096) % layout.get("block_bytes", 4096):
+            if (entry["logical"] - 4096) % layout["block_bytes"]:
                 raise ValueError("Unaligned data volume")
-            physical_slots += (entry["logical"] - 4096) // layout.get("block_bytes", 4096)
+            physical_slots += (entry["logical"] - 4096) // layout["block_bytes"]
         elif path.suffix == ".meta":
             key = "metadata"
         elif path.name.startswith("index-"):
@@ -153,7 +155,7 @@ def summarize_case(directory):
             "memory": memory, "storage": storage, "file_bytes": categories,
             "appended_data_slots": physical_slots,
             "retained_extra_data_bytes": ((physical_slots - layout["current_tiles"]) *
-                                          layout.get("block_bytes", 4096)),
+                                          layout["block_bytes"]),
             "lifecycle_checks": lifecycle, "tail_validation": validation,
             "registration_ns": sum(row["wall_ns"] for row in registrations),
             "tail_write_ns": sum(row["wall_ns"] for row in loads),

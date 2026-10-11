@@ -966,20 +966,72 @@ static void test_table_dictionaries(void) {
     OK(ohlc_resolve(db, hk.id, names[2], &code));
     CHECK(code == 0);
     OK(ohlc_close(db));
-    /* A valid old-version header must fail explicitly, without conversion. */
+    /* Reject an unknown version even when the header checksum is valid. */
     char catalog[512];
     CHECK(snprintf(catalog, sizeof(catalog), "%s/catalog-000001.dat", path) > 0);
     int fd = open(catalog, O_RDWR);
     CHECK(fd >= 0);
     uint8_t header[OHLC_PAGE_BYTES];
     OK(ohlc_read_full(fd, header, sizeof(header), 0));
-    header[7] = '5';
-    ohlc_put_u32(header + 8, 5);
+    ohlc_put_u32(header + 8, UINT32_MAX);
     ohlc_put_u32(header + 4092, 0);
     ohlc_put_u32(header + 4092, ohlc_crc32c(0, header, sizeof(header)));
     OK(ohlc_write_full(fd, header, sizeof(header), 0));
     CHECK(close(fd) == 0);
     CHECK(ohlc_open(path, &options, &db) == OHLC_UNSUPPORTED && db == NULL);
+    remove_directory(path);
+}
+
+static void test_catalog_high_water(void) {
+    char path[] = "/tmp/ohlc-catalog-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"bars", OHLC_DAY, 1, "", ""};
+    ohlc_table_info table;
+    OK(ohlc_table_create(db, &definition, &table));
+    CHECK(table.id == 1);
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_close(db));
+    OK(ohlc_open(path, &options, &db));
+    OK(ohlc_table_open(db, "bars", &table));
+    CHECK(table.id == 1);
+    OK(ohlc_close(db));
+
+    /* Corrupt both durable catalog roots while preserving their checksums.
+     * A live table cannot have a zero high-water ID or acquire one by inference. */
+    char catalog[512];
+    CHECK(snprintf(catalog, sizeof(catalog), "%s/catalog-000001.dat", path) > 0);
+    int catalog_fd = open(catalog, O_RDWR);
+    CHECK(catalog_fd >= 0);
+    for (unsigned int slot = 0; slot < 2; slot++) {
+        char current[512];
+        CHECK(snprintf(current, sizeof(current), "%s/CURRENT.%u", path, slot) > 0);
+        int fd = open(current, O_RDONLY);
+        CHECK(fd >= 0);
+        uint8_t checkpoint[OHLC_PAGE_BYTES];
+        OK(ohlc_read_full(fd, checkpoint, sizeof(checkpoint), 0));
+        CHECK(close(fd) == 0);
+        uint64_t offset = ohlc_get_u64(checkpoint + 48);
+        uint8_t header[32];
+        OK(ohlc_read_full(catalog_fd, header, sizeof(header), offset));
+        size_t size = (32u + (size_t)ohlc_get_u32(header + 8) + 7u) & ~(size_t)7u;
+        CHECK(size >= 64 && size <= 4096);
+        uint8_t record[4096];
+        OK(ohlc_read_full(catalog_fd, record, size, offset));
+        CHECK(ohlc_get_u32(record + 32 + 24) == 1);
+        CHECK(ohlc_get_u32(record + 32 + 28) == 1);
+        ohlc_put_u32(record + 32 + 28, 0);
+        ohlc_put_u32(record + 12, 0);
+        ohlc_put_u32(record + 12, ohlc_crc32c(0, record, size));
+        OK(ohlc_write_full(catalog_fd, record, size, offset));
+    }
+    CHECK(close(catalog_fd) == 0);
+    CHECK(ohlc_open(path, &options, &db) == OHLC_CORRUPT && db == NULL);
     remove_directory(path);
 }
 
@@ -1087,6 +1139,7 @@ int main(void) {
     test_closed_series();
     test_selected_cross();
     test_table_dictionaries();
+    test_catalog_high_water();
     test_format();
     test_time_tree();
     test_datetime();
