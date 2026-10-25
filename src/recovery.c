@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1543,6 +1544,138 @@ static ohlc_status wal_bounds(ohlc_db* db, uint32_t* last) {
     return status;
 }
 
+typedef enum {
+    OHLC_WAL_FRAME_VALID,
+    /* The segment ends inside this frame. */
+    OHLC_WAL_FRAME_INCOMPLETE,
+    /* The bytes do not form an intact frame. */
+    OHLC_WAL_FRAME_DAMAGED
+} ohlc_wal_frame_state;
+
+/* Read and verify the frame at position. An intact frame with an unexpected
+ * sequence is CORRUPT; torn or damaged bytes are reported through state. On
+ * VALID, the caller owns *output and frees it with the engine allocator. */
+static ohlc_status read_wal_frame(ohlc_db* db, int fd, uint64_t position, uint64_t remaining,
+                                  uint64_t expected_seq, ohlc_wal_frame_state* state,
+                                  uint8_t** output) {
+    *output = NULL;
+    *state = OHLC_WAL_FRAME_INCOMPLETE;
+    if (remaining < 64) {
+        return OHLC_OK;
+    }
+    uint8_t header[64];
+    ohlc_status status = ohlc_read_full(fd, header, sizeof(header), position);
+    if (status != OHLC_OK) {
+        return status;
+    }
+    *state = OHLC_WAL_FRAME_DAMAGED;
+    uint32_t header_crc = ohlc_get_u32(header + 48);
+    ohlc_put_u32(header + 48, 0);
+    uint64_t total = ohlc_get_u64(header + 16);
+    uint64_t payload_size = ohlc_get_u64(header + 40);
+    if (memcmp(header, "OHLCWTX6", 8) != 0 || ohlc_get_u16(header + 8) != OHLC_FORMAT_VERSION ||
+        ohlc_get_u32(header + 12) != 0 || total < 96 || total > OHLC_FRAME_LIMIT ||
+        total % 8u != 0 || payload_size > total - 96 ||
+        total != 96u + ((payload_size + 7u) & ~UINT64_C(7)) ||
+        header_crc != ohlc_crc32c(0, header, sizeof(header)) || ohlc_get_u32(header + 52) != 0 ||
+        ohlc_get_u64(header + 56) != 0) {
+        return OHLC_OK;
+    }
+    if (ohlc_get_u64(header + 24) != expected_seq || expected_seq == 0) {
+        return OHLC_CORRUPT;
+    }
+    if (total > remaining) {
+        *state = OHLC_WAL_FRAME_INCOMPLETE;
+        return OHLC_OK;
+    }
+    uint8_t* frame = ohlc_alloc(&db->allocator, (size_t)total);
+    if (frame == NULL) {
+        return OHLC_LIMIT;
+    }
+    status = ohlc_read_full(fd, frame, (size_t)total, position);
+    if (status != OHLC_OK) {
+        ohlc_free(&db->allocator, frame);
+        return status;
+    }
+    uint8_t* footer = frame + total - 32;
+    uint32_t crc = ohlc_get_u32(footer + 24);
+    ohlc_put_u32(footer + 24, 0);
+    bool intact = memcmp(footer, "OHLCEND6", 8) == 0 && ohlc_get_u32(footer + 28) == 0 &&
+                  crc == ohlc_crc32c(0, frame, (size_t)total);
+    for (uint64_t i = 64u + payload_size; intact && i < total - 32; i++) {
+        intact = frame[i] == 0;
+    }
+    if (!intact) {
+        ohlc_free(&db->allocator, frame);
+        return OHLC_OK;
+    }
+    if (ohlc_get_u64(footer + 8) != total || ohlc_get_u64(footer + 16) != expected_seq) {
+        ohlc_free(&db->allocator, frame);
+        return OHLC_CORRUPT;
+    }
+    *state = OHLC_WAL_FRAME_VALID;
+    *output = frame;
+    return OHLC_OK;
+}
+
+/* Save the unacknowledged tail [position, size) of the newest segment, then
+ * remove it. The copy is durable before truncation, so a crash between the two
+ * steps only repeats the discard on the next open. */
+static ohlc_status discard_wal_tail(ohlc_db* db, int fd, uint32_t id, uint64_t position,
+                                    uint64_t size, uint64_t first_seq) {
+    ohlc_wal_discard record = {
+        .bytes = size - position, .first_seq = first_seq, .offset = position, .wal_id = id};
+    int copy = -1;
+    for (unsigned int attempt = 0; attempt < 1000 && copy < 0; attempt++) {
+        if (attempt == 0) {
+            snprintf(record.file, sizeof(record.file), "wal-%06u.log.discarded-%" PRIu64, id,
+                     position);
+        } else {
+            snprintf(record.file, sizeof(record.file), "wal-%06u.log.discarded-%" PRIu64 ".%u",
+                     id, position, attempt);
+        }
+        copy = openat(db->directory_fd, record.file,
+                      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (copy < 0 && errno != EEXIST) {
+            return OHLC_IO;
+        }
+    }
+    if (copy < 0) {
+        return OHLC_IO;
+    }
+    size_t chunk = 1024u * 1024u;
+    uint8_t* buffer = ohlc_alloc(&db->allocator, chunk);
+    ohlc_status status = buffer == NULL ? OHLC_LIMIT : OHLC_OK;
+    for (uint64_t done = 0; status == OHLC_OK && done < record.bytes;) {
+        size_t part = record.bytes - done < chunk ? (size_t)(record.bytes - done) : chunk;
+        status = ohlc_read_full(fd, buffer, part, position + done);
+        if (status == OHLC_OK) {
+            status = ohlc_write_full(copy, buffer, part, done);
+        }
+        done += part;
+    }
+    ohlc_free(&db->allocator, buffer);
+    if (status == OHLC_OK) {
+        status = ohlc_sync(copy);
+    }
+    close(copy);
+    if (status == OHLC_OK && fsync(db->directory_fd) != 0) {
+        status = OHLC_IO;
+    }
+    if (status != OHLC_OK) {
+        /* The segment is unchanged; an incomplete copy must not look like a record. */
+        unlinkat(db->directory_fd, record.file, 0);
+        return status;
+    }
+    if (ftruncate(fd, (off_t)position) != 0 || ohlc_sync(fd) != OHLC_OK) {
+        status = OHLC_IO;
+    }
+    if (status == OHLC_OK) {
+        db->wal_discard = record;
+    }
+    return status;
+}
+
 static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoint) {
     uint32_t last = 0;
     ohlc_status status = wal_bounds(db, &last);
@@ -1596,56 +1729,23 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
         }
         while (status == OHLC_OK && position < (uint64_t)info.st_size) {
             uint64_t remaining = (uint64_t)info.st_size - position;
-            if (remaining < 64) {
-                status = id == last ? OHLC_OK : OHLC_CORRUPT;
-                break;
-            }
-            uint8_t header[64];
-            status = ohlc_read_full(fd, header, sizeof(header), position);
+            ohlc_wal_frame_state state = OHLC_WAL_FRAME_VALID;
+            uint8_t* frame = NULL;
+            status = read_wal_frame(db, fd, position, remaining, expected_seq, &state, &frame);
             if (status != OHLC_OK) {
                 break;
             }
-            uint32_t header_crc = ohlc_get_u32(header + 48);
-            ohlc_put_u32(header + 48, 0);
-            uint64_t total = ohlc_get_u64(header + 16);
-            uint64_t payload_size = ohlc_get_u64(header + 40);
-            if (memcmp(header, "OHLCWTX6", 8) != 0 ||
-                ohlc_get_u16(header + 8) != OHLC_FORMAT_VERSION || ohlc_get_u32(header + 12) != 0 ||
-                total < 96 || total > OHLC_FRAME_LIMIT || total % 8u != 0 ||
-                payload_size > total - 96 || total != 96u + ((payload_size + 7u) & ~UINT64_C(7)) ||
-                header_crc != ohlc_crc32c(0, header, sizeof(header)) ||
-                ohlc_get_u32(header + 52) != 0 || ohlc_get_u64(header + 56) != 0) {
-                status = OHLC_CORRUPT;
+            if (state != OHLC_WAL_FRAME_VALID) {
+                /* Only one commit group can be unsynced, and only in the newest
+                 * segment. Anything earlier was synced and may be acknowledged. */
+                bool unsynced_tail = id == last && (state == OHLC_WAL_FRAME_INCOMPLETE ||
+                                                    remaining <= OHLC_COMMIT_GROUP_BYTES);
+                status = unsynced_tail ? OHLC_OK : OHLC_CORRUPT;
                 break;
             }
-            if (total > remaining) {
-                status = id == last ? OHLC_OK : OHLC_CORRUPT;
-                break;
-            }
-            uint8_t* frame = ohlc_alloc(&db->allocator, (size_t)total);
-            if (frame == NULL) {
-                status = OHLC_LIMIT;
-                break;
-            }
-            status = ohlc_read_full(fd, frame, (size_t)total, position);
-            if (status == OHLC_OK) {
-                uint8_t* footer = frame + total - 32;
-                uint32_t crc = ohlc_get_u32(footer + 24);
-                ohlc_put_u32(footer + 24, 0);
-                if (memcmp(footer, "OHLCEND6", 8) != 0 || ohlc_get_u64(footer + 8) != total ||
-                    ohlc_get_u64(footer + 16) != expected_seq ||
-                    ohlc_get_u64(header + 24) != expected_seq || expected_seq == 0 ||
-                    ohlc_get_u32(footer + 28) != 0 || crc != ohlc_crc32c(0, frame, (size_t)total)) {
-                    status = OHLC_CORRUPT;
-                }
-                for (uint64_t i = 64u + payload_size; i < total - 32; i++) {
-                    if (frame[i] != 0) {
-                        status = OHLC_CORRUPT;
-                    }
-                }
-                if (status == OHLC_OK && expected_seq > db->root->seq) {
-                    status = replay_frame(db, frame);
-                }
+            uint64_t total = ohlc_get_u64(frame + 16);
+            if (expected_seq > db->root->seq) {
+                status = replay_frame(db, frame);
             }
             ohlc_free(&db->allocator, frame);
             if (status == OHLC_OK) {
@@ -1658,10 +1758,13 @@ static ohlc_status replay_wal(ohlc_db* db, const ohlc_checkpoint_entry* checkpoi
             return status;
         }
         if (id == last) {
-            if (position < (uint64_t)info.st_size &&
-                (ftruncate(fd, (off_t)position) != 0 || ohlc_sync(fd) != OHLC_OK)) {
-                close(fd);
-                return OHLC_IO;
+            if (position < (uint64_t)info.st_size) {
+                status = discard_wal_tail(db, fd, (uint32_t)id, position,
+                                          (uint64_t)info.st_size, expected_seq);
+                if (status != OHLC_OK) {
+                    close(fd);
+                    return status;
+                }
             }
             db->wal_fd = fd;
             db->wal_id = (uint32_t)id;

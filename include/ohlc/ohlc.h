@@ -130,6 +130,21 @@ typedef struct {
     uint64_t data_bytes;
 } ohlc_stats;
 
+/* Recovery may find a partly written commit group at the end of the newest WAL
+ * segment after a crash. Those bytes were never acknowledged; recovery durably saves
+ * them in the database directory, under the name in file, before truncating. */
+typedef struct {
+    /* Zero when this open discarded nothing; then the other fields are zero. */
+    uint64_t bytes;
+    /* First commit sequence that was not replayed. */
+    uint64_t first_seq;
+    /* Byte offset of the discarded tail within its segment. */
+    uint64_t offset;
+    uint32_t wal_id;
+    /* NUL-terminated name of the saved copy, relative to the database directory. */
+    char file[64];
+} ohlc_wal_discard;
+
 /* Process-wide constants; no allocation, initialization or ownership transfer.
  * Bindings must check the ABI before passing native structures to the library. */
 const char* ohlc_version(void);
@@ -153,6 +168,9 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
 ohlc_status ohlc_close(ohlc_db* db);
 void ohlc_uuid(ohlc_db* db, uint8_t output[16]);
 void ohlc_get_stats(ohlc_db* db, ohlc_stats* output);
+/* Copy the WAL tail discarded while this handle was opened. No allocation;
+ * thread-safe. The saved copy stays until an operator removes it. */
+void ohlc_wal_discard_info(ohlc_db* db, ohlc_wal_discard* output);
 
 ohlc_status ohlc_table_create(ohlc_db* db, const ohlc_table_definition* definition,
                               ohlc_table_info* output);

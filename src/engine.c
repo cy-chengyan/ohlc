@@ -208,6 +208,12 @@ void ohlc_get_stats(ohlc_db* db, ohlc_stats* output) {
     output->data_bytes = atomic_load_explicit(&db->data_bytes, memory_order_relaxed);
 }
 
+void ohlc_wal_discard_info(ohlc_db* db, ohlc_wal_discard* output) {
+    if (db != NULL && output != NULL) {
+        *output = db->wal_discard;
+    }
+}
+
 ohlc_status ohlc_table_get(ohlc_db* db, uint32_t id, ohlc_table_info* output) {
     if (db == NULL || output == NULL) {
         return OHLC_INVALID;
@@ -794,8 +800,10 @@ static void* commit_worker(void* argument) {
         size_t bytes = 0;
         while (queue->count != 0 && count < OHLC_COMMIT_GROUP) {
             ohlc_write_request* request = queue->queue[queue->head];
-            size_t size = request->size + 96u;
-            if (count != 0 && bytes + size > OHLC_FRAME_LIMIT) {
+            /* Count exact frame bytes, including padding: recovery uses the
+             * group budget to bound the unsynced WAL tail. */
+            size_t size = 96u + ((request->size + 7u) & ~(size_t)7u);
+            if (count != 0 && bytes + size > OHLC_COMMIT_GROUP_BYTES) {
                 break;
             }
             requests[count++] = request;

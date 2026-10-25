@@ -3,6 +3,7 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -289,6 +290,222 @@ static void check_series(ohlc_db* db, uint32_t table, uint32_t stock, uint32_t f
     ohlc_cursor_close(cursor);
 }
 
+/* A one-row numbered write: 64 B header, one 72 B record and the 32 B footer. */
+#define ONE_ROW_FRAME_BYTES (96u + OHLC_WRITE_BYTES)
+
+static size_t series_count(ohlc_db* db, uint32_t table, uint32_t ticker, uint32_t first,
+                           uint32_t end) {
+    ohlc_cursor* cursor = NULL;
+    OK(ohlc_series(db, table, ticker, first, end, &cursor));
+    uint8_t output[64 * OHLC_RESULT_BYTES];
+    size_t total = 0;
+    size_t count = 0;
+    do {
+        OK(ohlc_cursor_next(cursor, output, 64, &count));
+        total += count;
+    } while (count != 0);
+    ohlc_cursor_close(cursor);
+    return total;
+}
+
+static uint64_t file_bytes(const char* path) {
+    struct stat information;
+    CHECK(stat(path, &information) == 0);
+    return (uint64_t)information.st_size;
+}
+
+static void flip_file_byte(const char* path, uint64_t offset) {
+    int fd = open(path, O_RDWR);
+    CHECK(fd >= 0);
+    uint8_t byte = 0;
+    CHECK(pread(fd, &byte, 1, (off_t)offset) == 1);
+    byte ^= 1u;
+    CHECK(pwrite(fd, &byte, 1, (off_t)offset) == 1);
+    CHECK(close(fd) == 0);
+}
+
+static void append_zeros(const char* path, size_t count) {
+    int fd = open(path, O_WRONLY | O_APPEND);
+    CHECK(fd >= 0);
+    uint8_t zeros[4096] = {0};
+    CHECK(count <= sizeof(zeros) && write(fd, zeros, count) == (ssize_t)count);
+    CHECK(close(fd) == 0);
+}
+
+/* Commit one numbered row; report where its frame starts in the current segment. */
+static uint64_t write_frame(ohlc_db* db, uint32_t table, uint32_t ticker, uint32_t key,
+                            uint64_t* frame_offset) {
+    uint8_t record[OHLC_WRITE_BYTES];
+    ohlc_row row = value_for(ticker, key);
+    ohlc_write_encode(record, ticker, key, &row);
+    uint64_t sequence = 0;
+    OK(ohlc_write(db, table, record, 1, &sequence));
+    *frame_offset = db->wal_size - ONE_ROW_FRAME_BYTES;
+    return sequence;
+}
+
+/* Commit 1,000 named tickers at 200 times; the frame is about 14 MiB. */
+static uint64_t write_large_frame(ohlc_db* db, uint32_t table, uint32_t first_key,
+                                  uint64_t* frame_offset, uint64_t* frame_bytes) {
+    static char storage[1000][8];
+    ohlc_bytes names[1000];
+    for (size_t i = 0; i < 1000; i++) {
+        snprintf(storage[i], sizeof(storage[i]), "T%04zu", i);
+        names[i] = (ohlc_bytes){storage[i], 5};
+    }
+    size_t count = 200u * 1000u;
+    uint8_t* rows = malloc(count * OHLC_WRITE_BYTES);
+    CHECK(rows != NULL);
+    for (uint32_t time = 0; time < 200; time++) {
+        for (uint32_t index = 0; index < 1000; index++) {
+            ohlc_row row = value_for(index, first_key + time);
+            ohlc_write_encode(rows + ((size_t)time * 1000u + index) * OHLC_WRITE_BYTES, index,
+                              first_key + time, &row);
+        }
+    }
+    uint64_t start = db->wal_size;
+    uint64_t sequence = 0;
+    OK(ohlc_write_named(db, table, names, 1000, rows, count, &sequence));
+    free(rows);
+    *frame_offset = start;
+    *frame_bytes = db->wal_size - start;
+    return sequence;
+}
+
+static void test_wal_tail_discard(void) {
+    char path[] = "/tmp/ohlc-wal-tail-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"bars", OHLC_DAY, 1, "", ""};
+    ohlc_table_info table;
+    OK(ohlc_table_create(db, &definition, &table));
+    uint32_t ticker = 0;
+    uint64_t sequence = 0;
+    OK(ohlc_register(db, table.id, (ohlc_bytes){"AAPL", 4}, &ticker, &sequence));
+    uint64_t offset = 0;
+    sequence = write_frame(db, table.id, ticker, 1, &offset);
+    char wal[1024];
+    snprintf(wal, sizeof(wal), "%s/wal-%06u.log", path, db->wal_id);
+    uint32_t segment = db->wal_id;
+    uint64_t committed = db->wal_size;
+    OK(ohlc_close(db));
+
+    /* A crash can extend a segment before the appended data reaches the device. */
+    ohlc_wal_discard discard;
+    char saved[1100];
+    for (unsigned int repeat = 0; repeat < 2; repeat++) {
+        append_zeros(wal, 4096);
+        OK(ohlc_open(path, &options, &db));
+        ohlc_wal_discard_info(db, &discard);
+        CHECK(discard.bytes == 4096 && discard.offset == committed && discard.wal_id == segment &&
+              discard.first_seq == sequence + 1);
+        /* A second discard at the same offset keeps the first saved copy. */
+        char expected[64];
+        snprintf(expected, sizeof(expected), "wal-%06u.log.discarded-%" PRIu64 "%s", segment,
+                 committed, repeat == 0 ? "" : ".1");
+        CHECK(strcmp(discard.file, expected) == 0);
+        check_series(db, table.id, ticker, 1, 1, false);
+        OK(ohlc_close(db));
+        CHECK(file_bytes(wal) == committed);
+        snprintf(saved, sizeof(saved), "%s/%s", path, discard.file);
+        CHECK(file_bytes(saved) == 4096);
+    }
+
+    /* A damaged frame ends the replayed prefix even when an intact frame follows. */
+    OK(ohlc_open(path, &options, &db));
+    uint64_t damaged = 0;
+    uint64_t damaged_sequence = write_frame(db, table.id, ticker, 2, &damaged);
+    write_frame(db, table.id, ticker, 3, &offset);
+    OK(ohlc_close(db));
+    flip_file_byte(wal, damaged + 66);
+    OK(ohlc_open(path, &options, &db));
+    ohlc_wal_discard_info(db, &discard);
+    CHECK(discard.bytes == 2 * ONE_ROW_FRAME_BYTES && discard.offset == damaged &&
+          discard.first_seq == damaged_sequence);
+    check_series(db, table.id, ticker, 1, 1, false);
+    CHECK(series_count(db, table.id, ticker, 2, 3) == 0);
+
+    /* The truncated segment accepts new commits; a clean reopen discards nothing. */
+    write_frame(db, table.id, ticker, 2, &offset);
+    OK(ohlc_close(db));
+    OK(ohlc_open(path, &options, &db));
+    ohlc_wal_discard_info(db, &discard);
+    CHECK(discard.bytes == 0 && discard.file[0] == '\0');
+    check_series(db, table.id, ticker, 1, 2, false);
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
+static void test_wal_tail_boundaries(void) {
+    char path[] = "/tmp/ohlc-wal-bound-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"bars", OHLC_DAY, 1, "", ""};
+    ohlc_table_info table;
+    OK(ohlc_table_create(db, &definition, &table));
+    uint32_t ticker = 0;
+    uint64_t sequence = 0;
+    OK(ohlc_register(db, table.id, (ohlc_bytes){"AAPL", 4}, &ticker, &sequence));
+
+    /* An older segment was synced before rollover, so its frames may be acknowledged. */
+    uint64_t synced_offset = 0;
+    db->options.wal_segment_bytes = 8192;
+    write_frame(db, table.id, ticker, 1, &synced_offset);
+    char synced_wal[1024];
+    snprintf(synced_wal, sizeof(synced_wal), "%s/wal-%06u.log", path, db->wal_id);
+    uint32_t synced_segment = db->wal_id;
+    uint64_t offset = 0;
+    for (uint32_t key = 2; db->wal_id == synced_segment; key++) {
+        write_frame(db, table.id, ticker, key, &offset);
+    }
+    db->options.wal_segment_bytes = UINT64_C(1) << 30;
+
+    /* Damage farther than one commit group from the end cannot be an unsynced tail. */
+    uint64_t far_offset = 0;
+    write_frame(db, table.id, ticker, 1000, &far_offset);
+    char wal[1024];
+    snprintf(wal, sizeof(wal), "%s/wal-%06u.log", path, db->wal_id);
+    uint64_t first_offset = 0;
+    uint64_t first_bytes = 0;
+    write_large_frame(db, table.id, 2000, &first_offset, &first_bytes);
+    uint64_t last_offset = 0;
+    uint64_t last_bytes = 0;
+    uint64_t last_sequence = write_large_frame(db, table.id, 3000, &last_offset, &last_bytes);
+    CHECK(first_bytes + last_bytes > OHLC_COMMIT_GROUP_BYTES);
+    CHECK(last_bytes <= OHLC_COMMIT_GROUP_BYTES);
+    OK(ohlc_close(db));
+
+    flip_file_byte(synced_wal, synced_offset + 66);
+    CHECK(ohlc_open(path, &options, &db) == OHLC_CORRUPT && db == NULL);
+    flip_file_byte(synced_wal, synced_offset + 66);
+    flip_file_byte(wal, far_offset + 66);
+    CHECK(ohlc_open(path, &options, &db) == OHLC_CORRUPT && db == NULL);
+    flip_file_byte(wal, far_offset + 66);
+
+    /* The final large frame lies within the bound and is discarded as a tail. */
+    flip_file_byte(wal, last_offset + 66);
+    OK(ohlc_open(path, &options, &db));
+    ohlc_wal_discard discard;
+    ohlc_wal_discard_info(db, &discard);
+    CHECK(discard.bytes == last_bytes && discard.offset == last_offset &&
+          discard.first_seq == last_sequence);
+    uint32_t named = 0;
+    OK(ohlc_resolve(db, table.id, (ohlc_bytes){"T0000", 5}, &named));
+    CHECK(series_count(db, table.id, named, 2000, 2199) == 200);
+    CHECK(series_count(db, table.id, named, 3000, 3199) == 0);
+    check_series(db, table.id, ticker, 1000, 1000, false);
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
 static void test_closed_series(void) {
     char path[] = "/tmp/ohlc-closed-XXXXXX";
     CHECK(mkdtemp(path) != NULL);
@@ -569,8 +786,9 @@ static void test_database(void) {
     fd = open(data_path, O_WRONLY);
     CHECK(fd >= 0 && pwrite(fd, &data_byte, 1, 4096) == 1);
     CHECK(close(fd) == 0);
-    /* Covered WAL bytes are no longer part of startup validation. Damage a
-     * new, uncheckpointed frame to exercise the required replay suffix. */
+    /* Covered WAL bytes are no longer part of startup validation. Damage a new,
+     * uncheckpointed frame: as the unsynced tail of the newest segment, it is
+     * saved and removed rather than making the database unopenable. */
     OK(ohlc_open(path, &options, &db));
     ohlc_row pending = value_for(16, 3000);
     ohlc_write_encode(change, 16, 3000, &pending);
@@ -585,8 +803,21 @@ static void test_database(void) {
     byte ^= 1u;
     CHECK(pwrite(fd, &byte, 1, (off_t)pending_offset + 66) == 1);
     CHECK(close(fd) == 0);
-    CHECK(ohlc_open(path, &options, &db) == OHLC_CORRUPT);
-    CHECK(db == NULL);
+    OK(ohlc_open(path, &options, &db));
+    CHECK(series_count(db, table.id, 16, 3000, 3000) == 0);
+    ohlc_wal_discard discard;
+    ohlc_wal_discard_info(db, &discard);
+    CHECK(discard.bytes == ONE_ROW_FRAME_BYTES && discard.offset == pending_offset &&
+          discard.first_seq == seq && db->wal_size == pending_offset);
+    OK(ohlc_close(db));
+    char saved[1100];
+    snprintf(saved, sizeof(saved), "%s/%s", path, discard.file);
+    uint8_t copy[ONE_ROW_FRAME_BYTES];
+    CHECK(file_bytes(saved) == ONE_ROW_FRAME_BYTES);
+    fd = open(saved, O_RDONLY);
+    CHECK(fd >= 0 && pread(fd, copy, sizeof(copy), 0) == (ssize_t)sizeof(copy));
+    CHECK(close(fd) == 0);
+    CHECK(copy[66] == byte);
     free(rows);
     remove_directory(path);
 }
@@ -1232,6 +1463,8 @@ int main(void) {
     test_wal_retention();
     test_ordered_batches();
     test_unsupported_format();
+    test_wal_tail_discard();
+    test_wal_tail_boundaries();
     test_table_limit_reopen();
     test_drop_recovery();
     test_drop_checkpoint_race();

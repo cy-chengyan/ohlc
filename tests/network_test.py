@@ -354,7 +354,10 @@ def main():
             process.send_signal(signal.SIGTERM)
             _, errors = process.communicate(timeout=20)
             assert process.returncode == 0, errors.decode()
-        # Every acknowledged value remains available after a service restart.
+        # Every acknowledged value remains available after a service restart, and
+        # zeros a crash left after the last frame are discarded with a warning.
+        with max((root / "db").glob("wal-*.log")).open("ab") as stream:
+            stream.write(bytes(4096))
         process = subprocess.Popen(arguments, stderr=subprocess.PIPE)
         try:
             with connect_when_ready(process, **options) as client:
@@ -365,6 +368,7 @@ def main():
             process.send_signal(signal.SIGTERM)
             _, errors = process.communicate(timeout=20)
             assert process.returncode == 0, errors.decode()
+        assert b"WARNING: recovery discarded 4096 unacknowledged WAL bytes" in errors
     print("network framing, C/Python, two queries, authorization and restart: OK")
 
 

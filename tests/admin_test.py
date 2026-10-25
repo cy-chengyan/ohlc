@@ -40,6 +40,17 @@ def main():
             run("backup", source, archive, success=False)
             assert not archive.exists()
             run("check", source, success=False)
+        # A crash can leave zeros after the last frame; recovery saves and reports them.
+        segment = max(source.glob("wal-*.log"))
+        with segment.open("ab") as stream:
+            stream.write(bytes(4096))
+        result = subprocess.run([tool, "check", str(source)], capture_output=True, text=True,
+                                timeout=60)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "verified_rows=3" in result.stdout
+        assert "WARNING: recovery discarded 4096 unacknowledged WAL bytes" in result.stderr
+        discarded = list(source.glob("wal-*.log.discarded-*"))
+        assert len(discarded) == 1 and discarded[0].read_bytes() == bytes(4096)
         assert "verified_rows=3" in run("check", source)
         run("backup", source, archive)
         original = archive.read_bytes()
@@ -47,6 +58,7 @@ def main():
         run("backup", source, archive, success=False)
         assert archive.read_bytes() == original
         run("restore", archive, restored)
+        assert (restored / discarded[0].name).read_bytes() == bytes(4096)
         assert "verified_rows=3" in run("check", restored)
         with Database(restored, library=library) as db:
             assert db.uuid == uuid and db.stats()["commit_seq"] == sequence

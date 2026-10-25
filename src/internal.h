@@ -24,6 +24,9 @@ bool ohlc_row_valid(const uint8_t input[OHLC_ROW_BYTES]);
 #define OHLC_IO_WORKERS 16u
 #define OHLC_COMMIT_QUEUE 64u
 #define OHLC_COMMIT_GROUP 16u
+/* One commit group appends at most this many WAL bytes before its single sync.
+ * Recovery relies on this bound to recognize an unsynced tail after a crash. */
+#define OHLC_COMMIT_GROUP_BYTES OHLC_FRAME_LIMIT
 
 typedef struct {
     _Atomic size_t used;
@@ -309,6 +312,8 @@ struct ohlc_db {
     _Atomic uint64_t wal_syncs;
     _Atomic uint64_t data_bytes;
     _Atomic bool failed;
+    /* Written by recovery before open returns; read-only afterwards. */
+    ohlc_wal_discard wal_discard;
 };
 
 struct ohlc_cursor {

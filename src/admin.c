@@ -110,11 +110,58 @@ static bool numbered(const char* name, const char* prefix, const char* suffix) {
     return count > 0 && (size_t)count < sizeof(canonical) && strcmp(name, canonical) == 0;
 }
 
+/* Saved unacknowledged WAL tails, wal-NNNNNN.log.discarded-OFFSET[.N], are written
+ * by recovery and kept in archives as evidence for operators. */
+static bool discarded_wal(const char* path) {
+    const char* marker = strstr(path, ".log.discarded-");
+    if (marker == NULL || (size_t)(marker - path) + 4u >= 32u) {
+        return false;
+    }
+    char segment[32];
+    size_t length = (size_t)(marker - path) + 4u;
+    memcpy(segment, path, length);
+    segment[length] = '\0';
+    if (!numbered(segment, "wal-", ".log")) {
+        return false;
+    }
+    const char* digits = marker + strlen(".log.discarded-");
+    const char* end = digits;
+    uint64_t offset = 0;
+    while (*end >= '0' && *end <= '9') {
+        if (end - digits >= 19) {
+            return false;
+        }
+        offset = offset * 10 + (unsigned)(*end++ - '0');
+    }
+    uint64_t attempt = 0;
+    if (*end == '.') {
+        const char* counter = ++end;
+        while (*end >= '0' && *end <= '9') {
+            if (end - counter >= 3) {
+                return false;
+            }
+            attempt = attempt * 10 + (unsigned)(*end++ - '0');
+        }
+    }
+    if (end == digits || *end != '\0') {
+        return false;
+    }
+    char canonical[96];
+    if (attempt == 0) {
+        snprintf(canonical, sizeof(canonical), "%s.discarded-%" PRIu64, segment, offset);
+    } else {
+        snprintf(canonical, sizeof(canonical), "%s.discarded-%" PRIu64 ".%" PRIu64, segment,
+                 offset, attempt);
+    }
+    return strcmp(canonical, path) == 0;
+}
+
 /* Archive paths are a closed grammar, not general filesystem paths. This
  * rejects traversal, alternate separators, symlinks and future file layouts. */
 static bool file_path(const char* path) {
     if (strcmp(path, "CURRENT.0") == 0 || strcmp(path, "CURRENT.1") == 0 ||
-        strcmp(path, "catalog-000001.dat") == 0 || numbered(path, "wal-", ".log")) {
+        strcmp(path, "catalog-000001.dat") == 0 || numbered(path, "wal-", ".log") ||
+        discarded_wal(path)) {
         return true;
     }
     if (strlen(path) < 17 || strncmp(path, "tables/", 7) != 0 || path[15] != '/') {
@@ -285,6 +332,19 @@ static bool backup(ohlc_db* db, const char* destination) {
     return ok;
 }
 
+/* Opening for check or backup runs normal recovery; report any discarded tail. */
+static void report_wal_discard(ohlc_db* db) {
+    ohlc_wal_discard discard;
+    ohlc_wal_discard_info(db, &discard);
+    if (discard.bytes != 0) {
+        fprintf(stderr,
+                "WARNING: recovery discarded %" PRIu64 " unacknowledged WAL bytes from "
+                "wal-%06" PRIu32 ".log offset %" PRIu64 " (first sequence %" PRIu64
+                "); saved as %s\n",
+                discard.bytes, discard.wal_id, discard.offset, discard.first_seq, discard.file);
+    }
+}
+
 static int restore_file(int root, const char* path) {
     int directory = root;
     int tables = -1;
@@ -393,6 +453,7 @@ static bool restore(const char* source, const char* destination, const ohlc_opti
         ohlc_status status = ohlc_open(temporary, options, &db);
         ok = status == OHLC_OK;
         if (ok) {
+            report_wal_discard(db);
             uint8_t uuid[16];
             ohlc_uuid(db, uuid);
             ohlc_stats stats;
@@ -529,6 +590,7 @@ int main(int argc, char** argv) {
     ohlc_db* db = NULL;
     ohlc_status status = ohlc_open(argv[position + 1], &options, &db);
     if (status == OHLC_OK) {
+        report_wal_discard(db);
         status = checking ? check_database(db) : ohlc_checkpoint(db);
         if (copying && status == OHLC_OK && !backup(db, argv[position + 2])) {
             status = OHLC_IO;

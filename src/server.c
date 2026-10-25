@@ -463,6 +463,19 @@ finished:
     return NULL;
 }
 
+/* Operators must see that recovery removed an unacknowledged WAL tail. */
+static void report_wal_discard(ohlc_db* db) {
+    ohlc_wal_discard discard;
+    ohlc_wal_discard_info(db, &discard);
+    if (discard.bytes != 0) {
+        fprintf(stderr,
+                "WARNING: recovery discarded %" PRIu64 " unacknowledged WAL bytes from "
+                "wal-%06" PRIu32 ".log offset %" PRIu64 " (first sequence %" PRIu64
+                "); saved as %s\n",
+                discard.bytes, discard.wal_id, discard.offset, discard.first_seq, discard.file);
+    }
+}
+
 static void* checkpoint_worker(void* argument) {
     server* instance = argument;
     ohlc_status previous = OHLC_OK;
@@ -566,6 +579,7 @@ int main(int argc, char** argv) {
         SSL_CTX_free(instance.tls);
         return 1;
     }
+    report_wal_discard(instance.db);
     int listener = socket(address.ss_family, SOCK_STREAM, 0);
     int enabled = 1;
     if (listener >= 0) {
