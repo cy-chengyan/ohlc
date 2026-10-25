@@ -662,6 +662,41 @@ static ohlc_status insert_row(shell* state, const shell_command* command) {
     return status;
 }
 
+/* Rows pending for one named write, plus totals already confirmed by the server. */
+typedef struct {
+    ohlc_bytes* names;
+    uint8_t* records;
+    size_t pending;
+    size_t named_bytes;
+    uint64_t confirmed_rows;
+    uint64_t confirmed_batches;
+} import_progress;
+
+/* Commit the pending rows as one atomic batch. Names are released only after the
+ * server confirms the batch; a failed batch stays pending so it can be reported. */
+static ohlc_status commit_import_batch(shell* state, uint32_t table_id, import_progress* progress,
+                                       uint64_t through_record) {
+    uint64_t sequence;
+    ohlc_status status =
+        ohlc_client_write_named(state->client, table_id, progress->names, progress->pending,
+                                progress->records, progress->pending, &sequence);
+    if (status != OHLC_OK) {
+        return status;
+    }
+    for (size_t i = 0; i < progress->pending; i++) {
+        free((void*)progress->names[i].data);
+    }
+    progress->confirmed_rows += progress->pending;
+    progress->confirmed_batches++;
+    progress->pending = 0;
+    progress->named_bytes = 4;
+    fprintf(stderr,
+            "Import confirmed batches=%" PRIu64 " rows=%" PRIu64 " through_record=%" PRIu64
+            " commit_seq=%" PRIu64 "\n",
+            progress->confirmed_batches, progress->confirmed_rows, through_record, sequence);
+    return OHLC_OK;
+}
+
 static ohlc_status import_file(shell* state, const shell_command* command) {
     if (command->count < 3 || !text_word(&command->words[2])) {
         return OHLC_INVALID;
@@ -697,24 +732,21 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
         return status;
     }
     FILE* file = fopen(command->words[2].text, "r");
-    uint8_t* records = malloc((size_t)batch * OHLC_WRITE_BYTES);
-    ohlc_bytes* names = calloc((size_t)batch, sizeof(*names));
+    import_progress progress = {.names = calloc((size_t)batch, sizeof(ohlc_bytes)),
+                                .records = malloc((size_t)batch * OHLC_WRITE_BYTES),
+                                .named_bytes = 4};
     shell_command* fields = malloc(sizeof(*fields));
-    if (file == NULL || records == NULL || fields == NULL || names == NULL) {
-        free(names);
-        free(records);
+    if (file == NULL || progress.records == NULL || fields == NULL || progress.names == NULL) {
+        free(progress.names);
+        free(progress.records);
         free(fields);
         if (file != NULL) {
             fclose(file);
         }
         return OHLC_IO;
     }
-    uint64_t confirmed = 0;
-    uint64_t batches = 0;
     uint64_t record_number = 0;
     size_t column_count = 0;
-    size_t pending = 0;
-    size_t named_bytes = 4;
     bool eof = false;
     while (status == OHLC_OK && !eof && !ohlc_shell_interrupted) {
         status = ohlc_shell_text_record(file, csv, fields, &eof);
@@ -756,9 +788,11 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
         if (status == OHLC_OK && (length == 0 || length > 4096)) {
             status = OHLC_INVALID;
         }
-        if (status == OHLC_OK && named_bytes + length + 4u + (pending + 1u) * OHLC_WRITE_BYTES >
-                                     OHLC_FRAME_LIMIT - 104u) {
-            status = OHLC_LIMIT;
+        if (status == OHLC_OK && progress.pending != 0 &&
+            progress.named_bytes + length + 4u + (progress.pending + 1u) * OHLC_WRITE_BYTES >
+                OHLC_FRAME_LIMIT - 104u) {
+            /* Commit the rows that fit before this record would exceed one frame. */
+            status = commit_import_batch(state, table.id, &progress, record_number - 1);
         }
         if (status == OHLC_OK) {
             char* name = malloc(length);
@@ -766,32 +800,18 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
                 status = OHLC_LIMIT;
             } else {
                 memcpy(name, fields->words[0].text, length);
-                names[pending] = (ohlc_bytes){name, length};
-                named_bytes += length + 4u;
+                progress.names[progress.pending] = (ohlc_bytes){name, length};
+                progress.named_bytes += length + 4u;
             }
         }
         if (status != OHLC_OK) {
             break;
         }
-        ohlc_write_encode(records + pending * OHLC_WRITE_BYTES, (uint32_t)pending, key, &row);
-        pending++;
-        if (pending == batch) {
-            uint64_t sequence;
-            status = ohlc_client_write_named(state->client, table.id, names, pending, records,
-                                             pending, &sequence);
-            if (status == OHLC_OK) {
-                confirmed += pending;
-                for (size_t i = 0; i < pending; i++) {
-                    free((void*)names[i].data);
-                }
-                pending = 0;
-                named_bytes = 4;
-                batches++;
-                fprintf(stderr,
-                        "Import confirmed batches=%" PRIu64 " rows=%" PRIu64
-                        " through_record=%" PRIu64 " commit_seq=%" PRIu64 "\n",
-                        batches, confirmed, record_number, sequence);
-            }
+        ohlc_write_encode(progress.records + progress.pending * OHLC_WRITE_BYTES,
+                          (uint32_t)progress.pending, key, &row);
+        progress.pending++;
+        if (progress.pending == batch) {
+            status = commit_import_batch(state, table.id, &progress, record_number);
         }
     }
     if (ohlc_shell_interrupted && status != OHLC_OUTCOME_UNKNOWN) {
@@ -800,30 +820,21 @@ static ohlc_status import_file(shell* state, const shell_command* command) {
     if (header && status == OHLC_OK) {
         status = OHLC_INVALID;
     }
-    if (status == OHLC_OK && pending != 0) {
-        uint64_t sequence;
-        status = ohlc_client_write_named(state->client, table.id, names, pending, records, pending,
-                                         &sequence);
-        if (status == OHLC_OK) {
-            confirmed += pending;
-            batches++;
-            for (size_t i = 0; i < pending; i++) {
-                free((void*)names[i].data);
-            }
-            pending = 0;
-        }
+    if (status == OHLC_OK && progress.pending != 0) {
+        status = commit_import_batch(state, table.id, &progress, record_number);
     }
     fprintf(stderr,
             "Import %s: confirmed_batches=%" PRIu64 " confirmed_rows=%" PRIu64
             " input_record=%" PRIu64
             " pending_rows=%zu; names commit with each successful batch.\n",
-            status == OHLC_OK ? "complete" : "stopped", batches, confirmed, record_number, pending);
+            status == OHLC_OK ? "complete" : "stopped", progress.confirmed_batches,
+            progress.confirmed_rows, record_number, progress.pending);
     fclose(file);
-    for (size_t i = 0; i < pending; i++) {
-        free((void*)names[i].data);
+    for (size_t i = 0; i < progress.pending; i++) {
+        free((void*)progress.names[i].data);
     }
-    free(names);
-    free(records);
+    free(progress.names);
+    free(progress.records);
     free(fields);
     return status;
 }

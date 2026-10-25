@@ -829,11 +829,21 @@ public final class Ohlc implements AutoCloseable {
                 if (active != this || closed) {
                     throw new Failure(5, "Query connection is closed");
                 }
+                Frame frame;
                 try {
-                    Frame frame = receive();
-                    if (frame.status != 0) {
-                        throw new Failure(frame.status, "Query failed after " + emitted + " rows");
-                    }
+                    frame = receive();
+                } catch (IOException error) {
+                    abandon();
+                    throw error;
+                }
+                if (frame.status != 0) {
+                    // An error FINAL ends only this query; the stream stays aligned for reuse.
+                    complete = true;
+                    active = null;
+                    disarm();
+                    throw new Failure(frame.status, "Query failed after " + emitted + " rows");
+                }
+                try {
                     ByteBuffer body = frame.body;
                     if (body.remaining() < 32) {
                         throw corrupt("Truncated query metadata");
@@ -869,12 +879,17 @@ public final class Ohlc implements AutoCloseable {
                     ByteBuffer rows = body.slice().asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN);
                     return new Chunk(rows, (int) count, snapshot, complete);
                 } catch (IOException error) {
-                    active = null;
-                    disarm();
-                    abort();
+                    abandon();
                     throw error;
                 }
             }
+        }
+
+        /** Transport or framing failures leave the stream position unknown. */
+        private void abandon() {
+            active = null;
+            disarm();
+            abort();
         }
 
         @Override

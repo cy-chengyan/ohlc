@@ -172,6 +172,14 @@ public final class JavaClientTest {
                 }
                 assert rows == 2;
             }
+            // A query that fails with an error FINAL must not close the connection.
+            try (Ohlc.Query query = table.series(0xffffffffL, 0, 0)) {
+                query.next();
+                throw new AssertionError("Unknown ticker code accepted");
+            } catch (Ohlc.Failure expected) {
+                assert expected.status == 2;
+            }
+            client.ping();
             Ohlc.Table java = client.create("java_day", 5, true, "", "Java contract check");
             long code = 0;
             ByteBuffer records = Ohlc.buffer(Ohlc.WRITE_BYTES);

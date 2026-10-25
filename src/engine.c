@@ -1243,15 +1243,18 @@ ohlc_status ohlc_cursor_next(ohlc_cursor* cursor, void* output, size_t capacity,
     }
     uint8_t* bytes = output;
     while (*count < capacity) {
+        bool window_empty = cursor->emitted == cursor->planned;
+        /* The deadline bounds remaining work; it never fails a fully delivered result. */
+        if (window_empty && cursor->done) {
+            cursor_release_window(cursor);
+            break;
+        }
         if (ohlc_monotonic_ms() > cursor->deadline_ms) {
             cursor->error = OHLC_CANCELLED;
             break;
         }
-        if (cursor->emitted == cursor->planned) {
+        if (window_empty) {
             cursor_release_window(cursor);
-            if (cursor->done) {
-                break;
-            }
             if (cursor->kind == 1) {
                 cursor->error = plan_series(cursor);
             } else if (cursor->kind == 3) {

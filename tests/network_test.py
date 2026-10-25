@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise the actual server, C client binding, framing and durable mutations."""
 
+import datetime
 import os
 import json
 from pathlib import Path
@@ -307,6 +308,21 @@ def main():
                                    "IMPORT\t20260903\t1\t2\t3\t4\t5\t18446744073709551616\t7\n")
             partial = execute(f'import bars_5d "{import_path}" --batch-rows 1;', 1)
             assert "confirmed_rows=1" in partial.stderr
+            # Rows whose names would overflow one frame are committed as smaller batches.
+            long_name = "L" * 4000
+            long_path = root / "long-names.tsv"
+            first_day = datetime.date(2000, 1, 1)
+            with long_path.open("w") as stream:
+                stream.write("ticker\ttime\topen\thigh\tlow\tclose\tvolume\tamount"
+                             "\tadjust_factor\n")
+                for offset in range(4200):
+                    label = (first_day + datetime.timedelta(days=offset)).strftime("%Y%m%d")
+                    stream.write(f"{long_name}\t{label}\t1\t2\t3\t4\t5\t6\t7\n")
+            imported = execute(f'create long_names --period 1d; import long_names "{long_path}";')
+            assert "Import complete: confirmed_batches=2 confirmed_rows=4200" in imported.stderr
+            with Connection(**options) as client:
+                with client.table("long_names").series(long_name, "20000101", "20991231") as query:
+                    assert sum(chunk.count for chunk in query) == 4200
             execute('resolve bars_3m "NOT_REGISTERED"; register bars_3m "MUST_NOT_RUN";', 1)
             with Connection(**options) as client:
                 require_error(2, lambda: client.resolve(1, "MUST_NOT_RUN"))

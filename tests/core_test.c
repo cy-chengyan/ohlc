@@ -335,6 +335,22 @@ static void test_closed_series(void) {
         CHECK(count == 0);
         ohlc_cursor_close(cursor);
     }
+    /* An expired deadline cancels remaining rows but not a delivered result. */
+    uint8_t delivered[4 * OHLC_RESULT_BYTES];
+    size_t delivered_count = 0;
+    ohlc_cursor* expiring = NULL;
+    OK(ohlc_series(db, table.id, 0, 0, UINT32_MAX, &expiring));
+    OK(ohlc_cursor_next(expiring, delivered, 4, &delivered_count));
+    CHECK(delivered_count == 4);
+    expiring->deadline_ms = 0;
+    OK(ohlc_cursor_next(expiring, delivered, 4, &delivered_count));
+    CHECK(delivered_count == 0);
+    ohlc_cursor_close(expiring);
+    OK(ohlc_series(db, table.id, 0, 0, UINT32_MAX, &expiring));
+    OK(ohlc_cursor_next(expiring, delivered, 1, &delivered_count));
+    expiring->deadline_ms = 0;
+    CHECK(ohlc_cursor_next(expiring, delivered, 4, &delivered_count) == OHLC_CANCELLED);
+    ohlc_cursor_close(expiring);
     ohlc_cursor* cursor = NULL;
     CHECK(ohlc_series(db, table.id, 0, 7, 1, &cursor) == OHLC_INVALID && cursor == NULL);
     CHECK(ohlc_series(db, table.id, 0, 0, UINT64_C(1) << 32, &cursor) == OHLC_INVALID &&
@@ -765,6 +781,37 @@ static void test_wal_retention(void) {
     remove_directory(path);
 }
 
+static void test_table_limit_reopen(void) {
+    char path[] = "/tmp/ohlc-table-limit-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    options.max_tables = 3;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    const char* names[] = {"first", "second", "third"};
+    for (size_t i = 0; i < 3; i++) {
+        ohlc_table_definition definition = {names[i], OHLC_DAY, 1, "", ""};
+        ohlc_table_info info;
+        OK(ohlc_table_create(db, &definition, &info));
+    }
+    /* Both durable entries now exceed the smaller limit used below. */
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_checkpoint(db));
+    OK(ohlc_close(db));
+    options.max_tables = 2;
+    CHECK(ohlc_open(path, &options, &db) == OHLC_LIMIT);
+    CHECK(db == NULL);
+    options.max_tables = 3;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_stats stats;
+    ohlc_get_stats(db, &stats);
+    CHECK(stats.table_count == 3);
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
 static void test_drop_recovery(void) {
     char path[] = "/tmp/ohlc-drop-XXXXXX";
     CHECK(mkdtemp(path) != NULL);
@@ -1147,6 +1194,7 @@ int main(void) {
     test_database();
     test_wal_retention();
     test_ordered_batches();
+    test_table_limit_reopen();
     test_drop_recovery();
     test_drop_checkpoint_race();
     puts("format, indexes, snapshots, volume rollover, WAL, checkpoint and recovery: OK");

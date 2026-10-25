@@ -829,9 +829,14 @@ static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkp
         return status;
     }
     ohlc_root* root = NULL;
-    if (size < 32 || ohlc_get_u64(payload) != checkpoint->seq ||
-        ohlc_get_u32(payload + 24) > db->options.max_tables) {
+    if (size < 32 || ohlc_get_u64(payload) != checkpoint->seq) {
         status = OHLC_CORRUPT;
+        goto cleanup;
+    }
+    /* A configured limit below the live table count is a resource error, not
+     * damage. LIMIT stops recovery instead of falling back to an older entry. */
+    if (ohlc_get_u32(payload + 24) > db->options.max_tables) {
+        status = OHLC_LIMIT;
         goto cleanup;
     }
     root = ohlc_root_new(db);
