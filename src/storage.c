@@ -46,10 +46,12 @@ ohlc_status ohlc_storage_header(ohlc_db* db, int fd, uint32_t type, uint32_t tab
     }
     uint32_t checksum = ohlc_get_u32(header + 4092);
     ohlc_put_u32(header + 4092, 0);
-    if (memcmp(header, "OHLCFIL6", 8) != 0 || checksum != ohlc_crc32c(0, header, sizeof(header))) {
+    /* The magic prefix identifies an ohlc file; its final digit and the version
+     * field name the format. An intact header of another format is unsupported. */
+    if (memcmp(header, "OHLCFIL", 7) != 0 || checksum != ohlc_crc32c(0, header, sizeof(header))) {
         return OHLC_CORRUPT;
     }
-    if (ohlc_get_u32(header + 8) != OHLC_FORMAT_VERSION) {
+    if (header[7] != '6' || ohlc_get_u32(header + 8) != OHLC_FORMAT_VERSION) {
         return OHLC_UNSUPPORTED;
     }
     if (ohlc_get_u32(header + 12) != type || memcmp(header + 16, db->uuid, 16) != 0 ||

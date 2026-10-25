@@ -781,6 +781,43 @@ static void test_wal_retention(void) {
     remove_directory(path);
 }
 
+static void test_unsupported_format(void) {
+    char path[] = "/tmp/ohlc-format-XXXXXX";
+    CHECK(mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    OK(ohlc_close(db));
+    char catalog[1024];
+    snprintf(catalog, sizeof(catalog), "%s/catalog-000001.dat", path);
+    int fd = open(catalog, O_RDWR);
+    CHECK(fd >= 0);
+    uint8_t original[OHLC_PAGE_BYTES];
+    CHECK(pread(fd, original, sizeof(original), 0) == (ssize_t)sizeof(original));
+    /* An intact, correctly checksummed header from the previous disk format. */
+    uint8_t header[OHLC_PAGE_BYTES];
+    memcpy(header, original, sizeof(header));
+    header[7] = '5';
+    ohlc_put_u32(header + 8, 5);
+    ohlc_put_u32(header + 4092, 0);
+    ohlc_put_u32(header + 4092, ohlc_crc32c(0, header, sizeof(header)));
+    CHECK(pwrite(fd, header, sizeof(header), 0) == (ssize_t)sizeof(header));
+    CHECK(ohlc_open(path, &options, &db) == OHLC_UNSUPPORTED);
+    CHECK(db == NULL);
+    /* The same header with a broken checksum is damage, not another format. */
+    header[100] ^= 1u;
+    CHECK(pwrite(fd, header, sizeof(header), 0) == (ssize_t)sizeof(header));
+    CHECK(ohlc_open(path, &options, &db) == OHLC_CORRUPT);
+    CHECK(db == NULL);
+    CHECK(pwrite(fd, original, sizeof(original), 0) == (ssize_t)sizeof(original));
+    CHECK(close(fd) == 0);
+    OK(ohlc_open(path, &options, &db));
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
 static void test_table_limit_reopen(void) {
     char path[] = "/tmp/ohlc-table-limit-XXXXXX";
     CHECK(mkdtemp(path) != NULL);
@@ -1194,6 +1231,7 @@ int main(void) {
     test_database();
     test_wal_retention();
     test_ordered_batches();
+    test_unsupported_format();
     test_table_limit_reopen();
     test_drop_recovery();
     test_drop_checkpoint_race();
