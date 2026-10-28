@@ -263,6 +263,42 @@ static void test_commit_sync_failure(ohlc_db* db, uint32_t table, bool worker_fa
     wait_for_commits(db, 0, 0);
 }
 
+/* The fixed block cache is not pressure a checkpoint can relieve; other memory is. */
+static void test_memory_pressure(void) {
+    const char* temporary = getenv("TMPDIR");
+    char path[512];
+    int length = snprintf(path, sizeof(path), "%s/ohlc-pressure-XXXXXX",
+                          temporary == NULL ? "/tmp" : temporary);
+    CHECK(length > 0 && (size_t)length < sizeof(path) && mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    options.memory_limit = 64u * 1024u * 1024u;
+    options.cache_bytes = options.memory_limit / 2;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"bars", OHLC_DAY, 1, "", ""};
+    ohlc_table_info table;
+    OK(ohlc_table_create(db, &definition, &table));
+    uint64_t persisted = db->checkpoint_root->seq;
+    /* A small working set beside a half-budget cache: total usage exceeds half
+     * the budget, but no window, WAL or age trigger applies to this commit. */
+    void* working = ohlc_alloc(&db->allocator, 1024u * 1024u);
+    CHECK(working != NULL);
+    CHECK(atomic_load(&db->allocator.used) > options.memory_limit / 2);
+    OK(ohlc_checkpoint_background(db));
+    CHECK(db->checkpoint_root->seq == persisted);
+    /* Half of the budget left after the cache is genuine pressure. */
+    void* pressure = ohlc_alloc(&db->allocator, (db->allocator.limit - db->cache_reserved) / 2);
+    CHECK(pressure != NULL);
+    OK(ohlc_checkpoint_background(db));
+    CHECK(db->checkpoint_root->seq > persisted);
+    ohlc_free(&db->allocator, pressure);
+    ohlc_free(&db->allocator, working);
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
 static void test_checkpoint_overlap(ohlc_db* db, uint32_t table) {
     operation change = {.db = db, .table = table, .key = 2000, .value = 1};
     write_row(&change);
@@ -298,6 +334,7 @@ static void test_checkpoint_overlap(ohlc_db* db, uint32_t table) {
 }
 
 int main(void) {
+    test_memory_pressure();
     const char* temporary = getenv("TMPDIR");
     char path[512];
     int length = snprintf(path, sizeof(path), "%s/ohlc-pipeline-XXXXXX",

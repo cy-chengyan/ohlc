@@ -139,6 +139,7 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     memcpy(db->path, path, strlen(path) + 1);
     size_t entries_per_shard = options->cache_bytes / 16 / sizeof(ohlc_cache_entry);
     entries_per_shard -= entries_per_shard % 4;
+    size_t before_cache = atomic_load_explicit(&db->allocator.used, memory_order_relaxed);
     for (size_t i = 0; i < 16; i++) {
         db->cache[i].count = entries_per_shard;
         if (entries_per_shard != 0) {
@@ -150,6 +151,8 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
             }
         }
     }
+    db->cache_reserved =
+        atomic_load_explicit(&db->allocator.used, memory_order_relaxed) - before_cache;
     bool fresh = false;
     ohlc_status status = ohlc_storage_open(db, &fresh);
     if (status == OHLC_OK) {

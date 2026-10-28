@@ -299,6 +299,8 @@ struct ohlc_db {
     ohlc_retired_table* retired_tables;
     _Atomic bool reclaim_pending;
     ohlc_cache cache[16];
+    /* Allocator bytes held by the cache shards from open until close. */
+    size_t cache_reserved;
     ohlc_io_pool io;
     bool io_initialized;
     ohlc_commit_queue commits;

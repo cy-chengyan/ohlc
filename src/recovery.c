@@ -1245,6 +1245,14 @@ cleanup:
     return status;
 }
 
+/* The block cache is reserved at open and never shrinks, so a checkpoint cannot
+ * relieve it. Compare the other allocations with half of the remaining budget. */
+static bool memory_pressure(ohlc_db* db) {
+    size_t used = atomic_load_explicit(&db->allocator.used, memory_order_relaxed);
+    size_t working = used > db->cache_reserved ? used - db->cache_reserved : 0;
+    return working > (db->allocator.limit - db->cache_reserved) / 2;
+}
+
 ohlc_status ohlc_checkpoint_background(ohlc_db* db) {
     if (pthread_mutex_trylock(&db->checkpoint_mutex) != 0) {
         return OHLC_OK;
@@ -1253,9 +1261,7 @@ ohlc_status ohlc_checkpoint_background(ohlc_db* db) {
     const ohlc_root* saved = db->checkpoint_root;
     bool changed = saved == NULL || saved->seq != root->seq;
     uint64_t written = atomic_load_explicit(&db->wal_bytes, memory_order_relaxed);
-    bool due = atomic_load_explicit(&db->allocator.used, memory_order_relaxed) >
-                   db->options.memory_limit / 2 ||
-               written - db->checkpoint_wal_bytes >= 64u * 1024u * 1024u ||
+    bool due = memory_pressure(db) || written - db->checkpoint_wal_bytes >= 64u * 1024u * 1024u ||
                ohlc_monotonic_ms() - db->checkpoint_at_ms >= 300000;
     for (uint64_t id = 1; changed && !due && id <= root->last_table_id; id++) {
         const ohlc_table* table = ohlc_root_table(root, (uint32_t)id);
