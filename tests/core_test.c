@@ -90,6 +90,34 @@ static void test_format(void) {
         }
         CHECK(ohlc_crc32c(seed, arbitrary + alignment, length) == ~crc);
     }
+    /* Inline codecs keep exact little-endian bytes at every alignment and never
+     * touch neighboring bytes. */
+    const uint64_t samples[] = {0, 1, UINT64_C(0x8000000000000000), UINT64_MAX,
+                                UINT64_C(0x0123456789abcdef)};
+    for (size_t sample = 0; sample < sizeof(samples) / sizeof(samples[0]); sample++) {
+        uint64_t value = samples[sample];
+        for (size_t offset = 0; offset < 8; offset++) {
+            uint8_t buffer[24];
+            memset(buffer, 0xa5, sizeof(buffer));
+            ohlc_put_u64(buffer + offset, value);
+            for (size_t i = 0; i < sizeof(buffer); i++) {
+                uint8_t expected = 0xa5;
+                if (i >= offset && i < offset + 8) {
+                    expected = (uint8_t)(value >> ((i - offset) * 8));
+                }
+                CHECK(buffer[i] == expected);
+            }
+            CHECK(ohlc_get_u64(buffer + offset) == value);
+            CHECK(ohlc_get_u32(buffer + offset) == (uint32_t)value);
+            CHECK(ohlc_get_u16(buffer + offset) == (uint16_t)value);
+            memset(buffer, 0xa5, sizeof(buffer));
+            ohlc_put_u32(buffer + offset, (uint32_t)value);
+            ohlc_put_u16(buffer + offset + 4, (uint16_t)(value >> 32));
+            CHECK(ohlc_get_u32(buffer + offset) == (uint32_t)value);
+            CHECK(ohlc_get_u16(buffer + offset + 4) == (uint16_t)(value >> 32));
+            CHECK(buffer[offset + 6] == 0xa5 && (offset == 0 || buffer[offset - 1] == 0xa5));
+        }
+    }
     ohlc_row row = value_for(0, 17);
     uint8_t bytes[OHLC_ROW_BYTES + 1];
     ohlc_row_encode(bytes + 1, &row);

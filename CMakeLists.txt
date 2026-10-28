@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 project(ohlc VERSION 0.1.0 LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(CheckCCompilerFlag)
+include(CheckLinkerFlag)
 if(APPLE)
     set(CMAKE_INSTALL_RPATH "@loader_path;@loader_path/../${CMAKE_INSTALL_LIBDIR}")
 else()
@@ -71,6 +73,27 @@ function(ohlc_diagnostics target)
 endfunction()
 ohlc_diagnostics(ohlc)
 
+# On ELF, calls between functions of one ohlc library bind directly instead of
+# through the PLT. The compiler flag allows inlining within a file, and across
+# files when LTO generates code at link time; -Bsymbolic-functions binds the
+# remaining calls between files. Nothing interposes ohlc's own symbols; libc
+# calls stay interposable, which the fault-injection tests rely on. Mach-O
+# needs no flags.
+if(NOT APPLE)
+    check_c_compiler_flag(-fno-semantic-interposition OHLC_HAVE_NO_SEMANTIC_INTERPOSITION)
+    check_linker_flag(C -Wl,-Bsymbolic-functions OHLC_HAVE_BSYMBOLIC_FUNCTIONS)
+endif()
+function(ohlc_direct_binding target)
+    if(OHLC_HAVE_NO_SEMANTIC_INTERPOSITION)
+        target_compile_options(${target} PRIVATE -fno-semantic-interposition)
+        target_link_options(${target} PRIVATE -fno-semantic-interposition)
+    endif()
+    if(OHLC_HAVE_BSYMBOLIC_FUNCTIONS)
+        target_link_options(${target} PRIVATE -Wl,-Bsymbolic-functions)
+    endif()
+endfunction()
+ohlc_direct_binding(ohlc)
+
 if(OHLC_BUILD_NETWORK)
     find_package(OpenSSL 1.1.1 REQUIRED)
     add_library(ohlc_client SHARED src/net.c src/client.c)
@@ -80,6 +103,7 @@ if(OHLC_BUILD_NETWORK)
     set_target_properties(ohlc_client PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION 0)
     set_target_properties(ohlc_client PROPERTIES EXPORT_NAME client)
     ohlc_diagnostics(ohlc_client)
+    ohlc_direct_binding(ohlc_client)
 
     add_executable(ohlcd src/server.c src/server_config.c)
     target_include_directories(ohlcd PRIVATE src)

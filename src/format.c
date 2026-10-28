@@ -45,34 +45,6 @@ uint32_t ohlc_abi_version(void) {
     return OHLC_ABI_VERSION;
 }
 
-uint16_t ohlc_get_u16(const uint8_t* p) {
-    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
-
-uint32_t ohlc_get_u32(const uint8_t* p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-uint64_t ohlc_get_u64(const uint8_t* p) {
-    return (uint64_t)ohlc_get_u32(p) | ((uint64_t)ohlc_get_u32(p + 4) << 32);
-}
-
-void ohlc_put_u16(uint8_t* p, uint16_t value) {
-    p[0] = (uint8_t)value;
-    p[1] = (uint8_t)(value >> 8);
-}
-
-void ohlc_put_u32(uint8_t* p, uint32_t value) {
-    for (unsigned int i = 0; i < 4; i++) {
-        p[i] = (uint8_t)(value >> (i * 8));
-    }
-}
-
-void ohlc_put_u64(uint8_t* p, uint64_t value) {
-    ohlc_put_u32(p, (uint32_t)value);
-    ohlc_put_u32(p + 4, (uint32_t)(value >> 32));
-}
-
 void ohlc_row_encode(uint8_t output[OHLC_ROW_BYTES], const ohlc_row* row) {
     ohlc_put_u64(output, (row->flags & (1u << 0)) != 0 ? (uint64_t)row->open : 0);
     ohlc_put_u64(output + 8, (row->flags & (1u << 1)) != 0 ? (uint64_t)row->high : 0);
