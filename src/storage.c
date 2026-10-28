@@ -170,6 +170,47 @@ ohlc_status ohlc_storage_open(ohlc_db* db, bool* fresh) {
     return status;
 }
 
+ohlc_status ohlc_slot_set(ohlc_db* db, ohlc_slots* slots, size_t index, void* value) {
+    /* The storage owner is the only writer, so it may read its own stores relaxed. */
+    ohlc_slot_table* table = atomic_load_explicit(slots, memory_order_relaxed);
+    if (table == NULL || index >= table->capacity) {
+        size_t capacity = table == NULL ? 16u : table->capacity;
+        while (capacity <= index) {
+            if (capacity > SIZE_MAX / 2u / sizeof(table->slots[0])) {
+                return OHLC_LIMIT;
+            }
+            capacity *= 2u;
+        }
+        ohlc_slot_table* grown =
+            ohlc_alloc(&db->allocator, sizeof(*grown) + capacity * sizeof(grown->slots[0]));
+        if (grown == NULL) {
+            return OHLC_LIMIT;
+        }
+        grown->previous = table;
+        grown->capacity = capacity;
+        size_t copied = table == NULL ? 0 : table->capacity;
+        for (size_t i = 0; i < capacity; i++) {
+            void* existing =
+                i < copied ? atomic_load_explicit(&table->slots[i], memory_order_relaxed) : NULL;
+            atomic_init(&grown->slots[i], existing);
+        }
+        atomic_store_explicit(slots, grown, memory_order_release);
+        table = grown;
+    }
+    atomic_store_explicit(&table->slots[index], value, memory_order_release);
+    return OHLC_OK;
+}
+
+void ohlc_slot_free(ohlc_db* db, ohlc_slots* slots) {
+    ohlc_slot_table* table = atomic_load_explicit(slots, memory_order_relaxed);
+    while (table != NULL) {
+        ohlc_slot_table* previous = table->previous;
+        ohlc_free(&db->allocator, table);
+        table = previous;
+    }
+    atomic_store_explicit(slots, NULL, memory_order_relaxed);
+}
+
 static void volume_close(ohlc_db* db, ohlc_volume* volume) {
     if (volume == NULL) {
         return;
@@ -180,10 +221,11 @@ static void volume_close(ohlc_db* db, ohlc_volume* volume) {
     if (volume->meta_fd >= 0) {
         close(volume->meta_fd);
     }
-    for (size_t i = 0; i < volume->meta_capacity; i++) {
-        ohlc_free(&db->allocator, volume->meta_pages[i]);
+    size_t pages = ohlc_slot_capacity(&volume->meta_pages);
+    for (size_t i = 0; i < pages; i++) {
+        ohlc_free(&db->allocator, ohlc_slot_get(&volume->meta_pages, i));
     }
-    ohlc_free(&db->allocator, volume->meta_pages);
+    ohlc_slot_free(db, &volume->meta_pages);
     ohlc_free(&db->allocator, volume);
 }
 
@@ -195,24 +237,23 @@ static void table_files_close(ohlc_db* db, ohlc_table_files* files) {
         close(files->index_fd);
     }
     for (size_t i = 0; i < files->volume_count; i++) {
-        volume_close(db, files->volumes[i]);
+        volume_close(db, ohlc_slot_get(&files->volumes, i));
     }
-    ohlc_free(&db->allocator, files->volumes);
+    ohlc_slot_free(db, &files->volumes);
     ohlc_free(&db->allocator, files);
 }
 
 void ohlc_storage_close(ohlc_db* db) {
-    if (db->files != NULL) {
-        for (size_t i = 0; i < db->file_capacity; i++) {
-            table_files_close(db, db->files[i]);
-        }
+    size_t capacity = ohlc_slot_capacity(&db->files);
+    for (size_t i = 0; i < capacity; i++) {
+        table_files_close(db, ohlc_slot_get(&db->files, i));
     }
+    ohlc_slot_free(db, &db->files);
     while (db->retired_tables != NULL) {
         ohlc_retired_table* next = db->retired_tables->next;
         ohlc_free(&db->allocator, db->retired_tables);
         db->retired_tables = next;
     }
-    ohlc_free(&db->allocator, db->files);
     if (db->wal_fd >= 0) {
         close(db->wal_fd);
     }
@@ -227,40 +268,33 @@ void ohlc_storage_close(ohlc_db* db) {
     }
 }
 
+/* Allocate the metadata pages for count entries before any of them is published.
+ * Pages below the page of the current count already exist. */
 static ohlc_status meta_reserve(ohlc_db* db, ohlc_volume* volume, size_t count) {
+    size_t first = atomic_load_explicit(&volume->meta_count, memory_order_relaxed) /
+                   OHLC_META_PER_PAGE;
     size_t pages_needed = (count + OHLC_META_PER_PAGE - 1) / OHLC_META_PER_PAGE;
-    if (pages_needed > volume->meta_capacity) {
-        uint8_t** pages = ohlc_alloc(&db->allocator, pages_needed * sizeof(*pages));
-        if (pages == NULL) {
+    for (size_t i = first; i < pages_needed; i++) {
+        if (ohlc_slot_get(&volume->meta_pages, i) != NULL) {
+            continue;
+        }
+        uint8_t* page = ohlc_alloc(&db->allocator, OHLC_META_PER_PAGE * 32u);
+        if (page == NULL) {
             return OHLC_LIMIT;
         }
-        if (volume->meta_capacity != 0) {
-            memcpy(pages, volume->meta_pages, volume->meta_capacity * sizeof(*pages));
-        }
-        ohlc_free(&db->allocator, volume->meta_pages);
-        volume->meta_pages = pages;
-        size_t previous = volume->meta_capacity;
-        volume->meta_capacity = pages_needed;
-        for (size_t i = previous; i < pages_needed; i++) {
-            pages[i] = ohlc_alloc(&db->allocator, OHLC_META_PER_PAGE * 32u);
-            if (pages[i] == NULL) {
-                return OHLC_LIMIT;
-            }
-        }
-    }
-    for (size_t i = 0; i < pages_needed; i++) {
-        if (volume->meta_pages[i] == NULL) {
-            volume->meta_pages[i] = ohlc_alloc(&db->allocator, OHLC_META_PER_PAGE * 32u);
-            if (volume->meta_pages[i] == NULL) {
-                return OHLC_LIMIT;
-            }
+        ohlc_status status = ohlc_slot_set(db, &volume->meta_pages, i, page);
+        if (status != OHLC_OK) {
+            ohlc_free(&db->allocator, page);
+            return status;
         }
     }
     return OHLC_OK;
 }
 
+/* The caller ensures that block lies below a published or reserved count. */
 static uint8_t* meta_at(ohlc_volume* volume, uint64_t block) {
-    return volume->meta_pages[block / OHLC_META_PER_PAGE] + (block % OHLC_META_PER_PAGE) * 32u;
+    uint8_t* page = ohlc_slot_get(&volume->meta_pages, (size_t)(block / OHLC_META_PER_PAGE));
+    return page + (block % OHLC_META_PER_PAGE) * 32u;
 }
 
 static ohlc_status open_volume(ohlc_db* db, int directory, uint32_t table, uint32_t id, bool create,
@@ -273,6 +307,8 @@ static ohlc_status open_volume(ohlc_db* db, int directory, uint32_t table, uint3
     volume->id = id;
     volume->data_fd = -1;
     volume->meta_fd = -1;
+    atomic_init(&volume->meta_count, 0);
+    atomic_init(&volume->meta_pages, NULL);
     char name[64];
     int flags = O_RDWR | O_CLOEXEC | O_NOFOLLOW;
     if (create) {
@@ -327,18 +363,21 @@ static ohlc_status open_volume(ohlc_db* db, int directory, uint32_t table, uint3
     if (status != OHLC_OK) {
         goto cleanup;
     }
-    volume->meta_count = (size_t)blocks;
-    for (size_t i = 0; i < volume->meta_capacity; i++) {
-        size_t count = volume->meta_count - i * OHLC_META_PER_PAGE;
+    size_t pages = ((size_t)blocks + OHLC_META_PER_PAGE - 1) / OHLC_META_PER_PAGE;
+    for (size_t i = 0; i < pages; i++) {
+        size_t count = (size_t)blocks - i * OHLC_META_PER_PAGE;
         if (count > OHLC_META_PER_PAGE) {
             count = OHLC_META_PER_PAGE;
         }
-        status = ohlc_read_full(volume->meta_fd, volume->meta_pages[i], count * 32u,
+        status = ohlc_read_full(volume->meta_fd, ohlc_slot_get(&volume->meta_pages, i),
+                                count * 32u,
                                 OHLC_PAGE_BYTES + (uint64_t)i * OHLC_META_PER_PAGE * 32u);
         if (status != OHLC_OK) {
             goto cleanup;
         }
     }
+    /* Readers can reach the volume only after the owner publishes it. */
+    atomic_store_explicit(&volume->meta_count, (size_t)blocks, memory_order_relaxed);
     if (create && (ohlc_sync(volume->data_fd) != OHLC_OK || ohlc_sync(volume->meta_fd) != OHLC_OK ||
                    fsync(directory) != 0)) {
         status = OHLC_IO;
@@ -553,10 +592,14 @@ ohlc_status ohlc_storage_reclaim_tables(ohlc_db* db) {
         if (status != OHLC_OK) {
             break;
         }
+        /* No reader can reach this table: it is absent from every live root,
+         * and replaced slot-table copies are never consulted for its ID. */
         pthread_mutex_lock(&db->storage_mutex);
-        if (entry->id <= db->file_capacity) {
-            table_files_close(db, db->files[entry->id - 1]);
-            db->files[entry->id - 1] = NULL;
+        ohlc_table_files* files = ohlc_slot_get(&db->files, entry->id - 1);
+        if (files != NULL) {
+            /* Clearing an existing slot never grows the table, so it cannot fail. */
+            (void)ohlc_slot_set(db, &db->files, entry->id - 1, NULL);
+            table_files_close(db, files);
         }
         pthread_mutex_unlock(&db->storage_mutex);
         for (size_t shard = 0; shard < 16; shard++) {
@@ -623,21 +666,9 @@ ohlc_status ohlc_storage_table(ohlc_db* db, uint32_t table_id, bool create,
     if (table_id == 0) {
         return OHLC_CORRUPT;
     }
-    if (table_id > db->file_capacity) {
-        size_t capacity = ((size_t)table_id + 255u) & ~(size_t)255u;
-        ohlc_table_files** files = ohlc_alloc(&db->allocator, capacity * sizeof(*files));
-        if (files == NULL) {
-            return OHLC_LIMIT;
-        }
-        pthread_mutex_lock(&db->storage_mutex);
-        memcpy(files, db->files, db->file_capacity * sizeof(*files));
-        ohlc_free(&db->allocator, db->files);
-        db->files = files;
-        db->file_capacity = capacity;
-        pthread_mutex_unlock(&db->storage_mutex);
-    }
-    if (db->files[table_id - 1] != NULL) {
-        *output = db->files[table_id - 1];
+    ohlc_table_files* existing = ohlc_slot_get(&db->files, table_id - 1);
+    if (existing != NULL) {
+        *output = existing;
         return OHLC_OK;
     }
     int directory = -1;
@@ -651,6 +682,7 @@ ohlc_status ohlc_storage_table(ohlc_db* db, uint32_t table_id, bool create,
         return OHLC_LIMIT;
     }
     files->id = table_id;
+    atomic_init(&files->volumes, NULL);
     files->index_fd = openat(directory, "index-000001.dat", O_RDWR | O_CLOEXEC | O_NOFOLLOW);
     bool new_index = false;
     if (files->index_fd < 0 && errno == ENOENT && create) {
@@ -693,22 +725,33 @@ ohlc_status ohlc_storage_table(ohlc_db* db, uint32_t table_id, bool create,
         status = OHLC_IO;
         goto cleanup;
     }
-    close(directory);
     pthread_mutex_lock(&db->storage_mutex);
-    db->files[table_id - 1] = files;
+    status = ohlc_slot_set(db, &db->files, table_id - 1, files);
     pthread_mutex_unlock(&db->storage_mutex);
+    if (status != OHLC_OK) {
+        goto cleanup;
+    }
+    close(directory);
     *output = files;
     return OHLC_OK;
 cleanup:
     if (files->index_fd >= 0) {
         close(files->index_fd);
     }
-    for (size_t i = 0; i < files->volume_count; i++) {
-        volume_close(db, files->volumes[i]);
-    }
-    ohlc_free(&db->allocator, files->volumes);
+    ohlc_slot_free(db, &files->volumes);
     ohlc_free(&db->allocator, files);
     close(directory);
+    return status;
+}
+
+/* Publish a fully opened volume to lock-free readers. */
+static ohlc_status publish_volume(ohlc_db* db, ohlc_table_files* files, ohlc_volume* volume) {
+    pthread_mutex_lock(&db->storage_mutex);
+    ohlc_status status = ohlc_slot_set(db, &files->volumes, volume->id - 1, volume);
+    pthread_mutex_unlock(&db->storage_mutex);
+    if (status == OHLC_OK && volume->id > files->volume_count) {
+        files->volume_count = volume->id;
+    }
     return status;
 }
 
@@ -718,7 +761,7 @@ ohlc_status ohlc_storage_load_volume(ohlc_db* db, ohlc_table_files* files, uint3
     if (id == 0) {
         return OHLC_CORRUPT;
     }
-    if (id <= files->volume_count && files->volumes[id - 1] != NULL) {
+    if (ohlc_slot_get(&files->volumes, id - 1) != NULL) {
         return OHLC_OK;
     }
     int directory = -1;
@@ -732,36 +775,21 @@ ohlc_status ohlc_storage_load_volume(ohlc_db* db, ohlc_table_files* files, uint3
     if (status != OHLC_OK) {
         return status == OHLC_NOT_FOUND ? OHLC_CORRUPT : status;
     }
-    if (id > files->volume_count) {
-        ohlc_volume** volumes = ohlc_alloc(&db->allocator, (size_t)id * sizeof(*volumes));
-        if (volumes == NULL) {
-            volume_close(db, volume);
-            return OHLC_LIMIT;
-        }
-        pthread_mutex_lock(&db->storage_mutex);
-        if (files->volume_count != 0) {
-            memcpy(volumes, files->volumes, files->volume_count * sizeof(*volumes));
-        }
-        ohlc_free(&db->allocator, files->volumes);
-        files->volumes = volumes;
-        files->volume_count = id;
-        pthread_mutex_unlock(&db->storage_mutex);
+    status = publish_volume(db, files, volume);
+    if (status != OHLC_OK) {
+        volume_close(db, volume);
     }
-    pthread_mutex_lock(&db->storage_mutex);
-    files->volumes[id - 1] = volume;
-    pthread_mutex_unlock(&db->storage_mutex);
-    return OHLC_OK;
+    return status;
 }
 
+/* Lock-free: a reader holds a root that references only volumes, and metadata,
+ * which the storage owner published before that root. */
 static ohlc_volume* find_volume(ohlc_db* db, uint32_t table, uint32_t volume) {
-    if (table == 0 || table > db->file_capacity || volume == 0) {
+    if (table == 0 || volume == 0) {
         return NULL;
     }
-    ohlc_table_files* files = db->files[table - 1];
-    if (files == NULL || volume > files->volume_count) {
-        return NULL;
-    }
-    return files->volumes[volume - 1];
+    ohlc_table_files* files = ohlc_slot_get(&db->files, table - 1);
+    return files == NULL ? NULL : ohlc_slot_get(&files->volumes, volume - 1);
 }
 
 static uint64_t tile_offset(const ohlc_group* group, uint8_t tile) {
@@ -783,16 +811,17 @@ const uint8_t* ohlc_storage_presence(ohlc_db* db, uint32_t table, const ohlc_gro
         entry = &hot->backing;
     }
     uint64_t offset = tile_offset(entry, tile);
-    const uint8_t* presence = NULL;
-    pthread_mutex_lock(&db->storage_mutex);
     ohlc_volume* volume = find_volume(db, table, entry->volume);
-    if (volume != NULL && offset >= OHLC_PAGE_BYTES &&
-        (offset - OHLC_PAGE_BYTES) % OHLC_BLOCK_BYTES == 0 &&
-        (offset - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES < volume->meta_count) {
-        presence = meta_at(volume, (offset - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES);
+    if (volume == NULL || offset < OHLC_PAGE_BYTES ||
+        (offset - OHLC_PAGE_BYTES) % OHLC_BLOCK_BYTES != 0) {
+        return NULL;
     }
-    pthread_mutex_unlock(&db->storage_mutex);
-    return presence;
+    uint64_t block = (offset - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES;
+    /* Load the count before its pages: the owner publishes them in that order. */
+    if (block >= atomic_load_explicit(&volume->meta_count, memory_order_acquire)) {
+        return NULL;
+    }
+    return meta_at(volume, block);
 }
 
 static uint32_t tile_checksum(const uint8_t* data, const uint8_t* metadata, uint32_t table,
@@ -892,10 +921,8 @@ static ohlc_status prepare_view(ohlc_db* db, uint32_t table, ohlc_tile_view* vie
         return OHLC_CORRUPT;
     }
     view->offset = tile_offset(entry, view->tile);
-    pthread_mutex_lock(&db->storage_mutex);
     ohlc_volume* volume = find_volume(db, table, entry->volume);
     view->fd = volume == NULL ? -1 : volume->data_fd;
-    pthread_mutex_unlock(&db->storage_mutex);
     if (view->fd < 0) {
         return OHLC_CORRUPT;
     }
@@ -1036,42 +1063,36 @@ ohlc_status ohlc_storage_tile(ohlc_db* db, uint32_t table, uint32_t band, uint32
 
 static ohlc_status allocate_extent(ohlc_db* db, ohlc_table_files* files, size_t blocks,
                                    ohlc_volume** output) {
-    ohlc_volume* volume = files->volume_count == 0 ? NULL : files->volumes[files->volume_count - 1];
+    ohlc_volume* volume = files->volume_count == 0
+                              ? NULL
+                              : ohlc_slot_get(&files->volumes, files->volume_count - 1);
     uint64_t bytes = (uint64_t)blocks * OHLC_BLOCK_BYTES;
     if (volume == NULL || volume->size > db->options.data_volume_bytes - bytes) {
         if (files->next_volume_id > UINT32_MAX) {
             return OHLC_LIMIT;
         }
         uint32_t id = (uint32_t)files->next_volume_id;
-        ohlc_volume** volumes = ohlc_alloc(&db->allocator, (size_t)id * sizeof(*volumes));
-        if (volumes == NULL) {
-            return OHLC_LIMIT;
-        }
         int directory = -1;
         ohlc_status directory_status = table_directory(db, files->id, false, &directory);
         if (directory_status != OHLC_OK) {
-            ohlc_free(&db->allocator, volumes);
             return directory_status;
         }
         ohlc_status status = open_volume(db, directory, files->id, id, true, &volume);
         close(directory);
         if (status != OHLC_OK) {
-            ohlc_free(&db->allocator, volumes);
             return status;
         }
-        pthread_mutex_lock(&db->storage_mutex);
-        if (files->volume_count != 0) {
-            memcpy(volumes, files->volumes, files->volume_count * sizeof(*volumes));
-        }
-        volumes[id - 1] = volume;
-        ohlc_free(&db->allocator, files->volumes);
-        files->volumes = volumes;
-        files->volume_count = id;
+        /* The created files keep this ID even if publication fails. */
         files->next_volume_id++;
-        pthread_mutex_unlock(&db->storage_mutex);
+        status = publish_volume(db, files, volume);
+        if (status != OHLC_OK) {
+            volume_close(db, volume);
+            return status;
+        }
     }
     pthread_mutex_lock(&db->storage_mutex);
-    ohlc_status status = meta_reserve(db, volume, volume->meta_count + blocks);
+    ohlc_status status = meta_reserve(
+        db, volume, atomic_load_explicit(&volume->meta_count, memory_order_relaxed) + blocks);
     pthread_mutex_unlock(&db->storage_mutex);
     *output = volume;
     return status;
@@ -1116,10 +1137,11 @@ ohlc_status ohlc_storage_flush_group(ohlc_db* db, uint32_t table, uint32_t band,
         goto cleanup;
     }
     uint64_t base = volume->size;
+    size_t count = atomic_load_explicit(&volume->meta_count, memory_order_relaxed);
     status = ohlc_write_full(volume->data_fd, data, blocks * OHLC_BLOCK_BYTES, base);
     if (status == OHLC_OK) {
         status = ohlc_write_full(volume->meta_fd, metadata, blocks * 32,
-                                 OHLC_PAGE_BYTES + (uint64_t)volume->meta_count * 32u);
+                                 OHLC_PAGE_BYTES + (uint64_t)count * 32u);
     }
     if (status != OHLC_OK) {
         db->failed = true;
@@ -1127,9 +1149,10 @@ ohlc_status ohlc_storage_flush_group(ohlc_db* db, uint32_t table, uint32_t band,
     }
     pthread_mutex_lock(&db->storage_mutex);
     for (size_t i = 0; i < blocks; i++) {
-        memcpy(meta_at(volume, volume->meta_count + i), metadata + i * 32, 32);
+        memcpy(meta_at(volume, count + i), metadata + i * 32, 32);
     }
-    volume->meta_count += blocks;
+    /* Readers that observe the new count also observe these entries. */
+    atomic_store_explicit(&volume->meta_count, count + blocks, memory_order_release);
     volume->size += blocks * OHLC_BLOCK_BYTES;
     volume->dirty = true;
     pthread_mutex_unlock(&db->storage_mutex);

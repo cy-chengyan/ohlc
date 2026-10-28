@@ -333,8 +333,107 @@ static void test_checkpoint_overlap(ohlc_db* db, uint32_t table) {
     check_one(db, table, 2000, 2);
 }
 
+typedef struct {
+    ohlc_db* db;
+    uint32_t table;
+    _Atomic bool stop;
+} growth_reader;
+
+/* Write tickers 0..15 at the 128 keys of one band: one full 16-block extent. */
+static void write_band(ohlc_db* db, uint32_t table, uint32_t band, uint8_t* rows) {
+    for (uint32_t i = 0; i < 128; i++) {
+        uint32_t key = band * 128u + i;
+        for (uint32_t ticker = 0; ticker < 16; ticker++) {
+            ohlc_row row = value_for(ticker, key);
+            ohlc_write_encode(rows + ((size_t)i * 16u + ticker) * OHLC_WRITE_BYTES, ticker, key,
+                              &row);
+        }
+    }
+    uint64_t sequence = 0;
+    OK(ohlc_write(db, table, rows, 16u * 128u, &sequence));
+}
+
+/* Band 0 stays on disk, so every query looks up its volume and metadata. */
+static void* read_stored_band(void* argument) {
+    growth_reader* reader = argument;
+    for (uint32_t key = 0; !atomic_load(&reader->stop); key = (key + 1) % 128) {
+        check_query(reader->db, reader->table, false, 0, 128);
+        check_query(reader->db, reader->table, true, key, 16);
+    }
+    return NULL;
+}
+
+/* Queries resolve table files, volumes and block metadata without the storage
+ * lock. Each checkpoint fills a new data volume with one extent and stores a
+ * table with a new ID, so both slot tables grow twice while readers look up
+ * the slots that the growth copies. */
+static void test_storage_growth(void) {
+    const char* temporary = getenv("TMPDIR");
+    char path[512];
+    int length = snprintf(path, sizeof(path), "%s/ohlc-growth-XXXXXX",
+                          temporary == NULL ? "/tmp" : temporary);
+    CHECK(length > 0 && (size_t)length < sizeof(path) && mkdtemp(path) != NULL);
+    ohlc_options options;
+    ohlc_options_init(&options);
+    options.create_if_missing = true;
+    options.cache_bytes = 0;
+    options.data_volume_bytes = OHLC_PAGE_BYTES + 16u * OHLC_BLOCK_BYTES;
+    ohlc_db* db = NULL;
+    OK(ohlc_open(path, &options, &db));
+    ohlc_table_definition definition = {"bars", OHLC_DAY, 1, "", ""};
+    ohlc_table_info table;
+    OK(ohlc_table_create(db, &definition, &table));
+    uint64_t sequence = 0;
+    for (uint32_t ticker = 0; ticker < 16; ticker++) {
+        char name[16];
+        length = snprintf(name, sizeof(name), "S%u", ticker);
+        uint32_t code = 0;
+        OK(ohlc_register(db, table.id, (ohlc_bytes){name, (size_t)length}, &code, &sequence));
+        CHECK(code == ticker);
+    }
+    uint8_t* rows = malloc(16u * 128u * OHLC_WRITE_BYTES);
+    CHECK(rows != NULL);
+    write_band(db, table.id, 0, rows);
+    OK(ohlc_checkpoint(db));
+    ohlc_table_files* files = ohlc_slot_get(&db->files, table.id - 1);
+    CHECK(files != NULL);
+    ohlc_volume* first_volume = ohlc_slot_get(&files->volumes, 0);
+    ohlc_slot_table* first_files = atomic_load(&db->files);
+    ohlc_slot_table* first_volumes = atomic_load(&files->volumes);
+    growth_reader reader = {.db = db, .table = table.id};
+    pthread_t readers[4];
+    for (size_t i = 0; i < 4; i++) {
+        CHECK(pthread_create(&readers[i], NULL, read_stored_band, &reader) == 0);
+    }
+    for (uint32_t band = 1; band <= 40; band++) {
+        char name[16];
+        snprintf(name, sizeof(name), "churn%u", band);
+        ohlc_table_definition churn_definition = {name, OHLC_DAY, 1, "", ""};
+        ohlc_table_info churn;
+        OK(ohlc_table_create(db, &churn_definition, &churn));
+        uint32_t code = 0;
+        OK(ohlc_register(db, churn.id, (ohlc_bytes){"S0", 2}, &code, &sequence));
+        write_band(db, table.id, band, rows);
+        OK(ohlc_checkpoint(db));
+        OK(ohlc_table_drop(db, churn.id, &sequence));
+    }
+    atomic_store(&reader.stop, true);
+    for (size_t i = 0; i < 4; i++) {
+        pthread_join(readers[i], NULL);
+    }
+    free(rows);
+    CHECK(ohlc_slot_capacity(&db->files) > 32u);
+    CHECK(ohlc_slot_capacity(&files->volumes) > 32u);
+    /* A reader may still hold a replaced copy, so it stays intact until close. */
+    CHECK(atomic_load(&first_files->slots[table.id - 1]) == files);
+    CHECK(atomic_load(&first_volumes->slots[0]) == first_volume);
+    OK(ohlc_close(db));
+    remove_directory(path);
+}
+
 int main(void) {
     test_memory_pressure();
+    test_storage_growth();
     const char* temporary = getenv("TMPDIR");
     char path[512];
     int length = snprintf(path, sizeof(path), "%s/ohlc-pipeline-XXXXXX",

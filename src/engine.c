@@ -88,6 +88,7 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     atomic_init(&db->data_bytes, 0);
     atomic_init(&db->failed, false);
     atomic_init(&db->reclaim_pending, false);
+    atomic_init(&db->files, NULL);
     atomic_init(&db->checkpoint_generation, 0);
     atomic_init(&db->checkpoint_sequences[0], 0);
     atomic_init(&db->checkpoint_sequences[1], 0);
@@ -129,10 +130,8 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     }
     db->io_initialized = true;
     db->path = ohlc_alloc(&db->allocator, strlen(path) + 1);
-    db->files = ohlc_alloc(&db->allocator, (size_t)options->max_tables * sizeof(*db->files));
-    db->file_capacity = options->max_tables;
     db->root = ohlc_root_new(db);
-    if (db->path == NULL || db->files == NULL || db->root == NULL) {
+    if (db->path == NULL || db->root == NULL) {
         database_destroy(db);
         return OHLC_LIMIT;
     }

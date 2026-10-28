@@ -157,14 +157,42 @@ typedef struct ohlc_retired_table {
     uint32_t id;
 } ohlc_retired_table;
 
+/* A grow-only table of pointers that readers use without a lock. Only the
+ * storage owner (the checkpoint owner, or recovery) stores slots. Growth
+ * publishes a larger copy with release semantics; a replaced copy stays valid
+ * through previous until close, because a reader may still be using it. */
+typedef struct ohlc_slot_table ohlc_slot_table;
+struct ohlc_slot_table {
+    ohlc_slot_table* previous;
+    size_t capacity;
+    _Atomic(void*) slots[];
+};
+typedef _Atomic(ohlc_slot_table*) ohlc_slots;
+
+static inline void* ohlc_slot_get(ohlc_slots* slots, size_t index) {
+    ohlc_slot_table* table = atomic_load_explicit(slots, memory_order_acquire);
+    if (table == NULL || index >= table->capacity) {
+        return NULL;
+    }
+    return atomic_load_explicit(&table->slots[index], memory_order_acquire);
+}
+
+static inline size_t ohlc_slot_capacity(ohlc_slots* slots) {
+    ohlc_slot_table* table = atomic_load_explicit(slots, memory_order_acquire);
+    return table == NULL ? 0 : table->capacity;
+}
+
 typedef struct {
     uint32_t id;
     int data_fd;
     int meta_fd;
+    /* Next append offset; only the storage owner uses it. */
     uint64_t size;
-    size_t meta_count;
-    size_t meta_capacity;
-    uint8_t** meta_pages;
+    /* Metadata entries below meta_count are immutable. The owner writes new
+     * entries, and any new pages, before publishing the count with release. */
+    _Atomic size_t meta_count;
+    /* Pages of OHLC_META_PER_PAGE 32-byte entries, indexed by page number. */
+    ohlc_slots meta_pages;
     /* Only the checkpoint owner reads or writes persistence dirty flags. */
     bool dirty;
 } ohlc_volume;
@@ -175,8 +203,10 @@ typedef struct {
     uint64_t index_size;
     uint64_t dictionary_disk_count;
     uint64_t dictionary_disk_offset;
+    /* Highest loaded volume ID; only the storage owner uses it. */
     size_t volume_count;
-    ohlc_volume** volumes;
+    /* ohlc_volume pointers indexed by volume ID - 1. */
+    ohlc_slots volumes;
     uint64_t next_volume_id;
     bool index_dirty;
 } ohlc_table_files;
@@ -292,10 +322,12 @@ struct ohlc_db {
     pthread_mutex_t checkpoint_mutex;
     pthread_mutex_t writer;
     pthread_mutex_t root_mutex;
+    /* Serializes storage mutations; queries and writers only read storage
+     * objects, through ohlc_slots, and never take this lock. */
     pthread_mutex_t storage_mutex;
     ohlc_root* root;
-    ohlc_table_files** files;
-    size_t file_capacity;
+    /* ohlc_table_files pointers indexed by table ID - 1. */
+    ohlc_slots files;
     ohlc_retired_table* retired_tables;
     _Atomic bool reclaim_pending;
     ohlc_cache cache[16];
@@ -444,6 +476,10 @@ ohlc_status ohlc_named_pack(ohlc_allocator* allocator, const ohlc_bytes* tickers
                             size_t ticker_count, const void* rows, size_t count, uint8_t** output,
                             size_t* size);
 
+/* Store one slot as the storage owner, growing the table when needed. */
+ohlc_status ohlc_slot_set(ohlc_db* db, ohlc_slots* slots, size_t index, void* value);
+/* Free every copy of a slot table at close; the slot values are not freed. */
+void ohlc_slot_free(ohlc_db* db, ohlc_slots* slots);
 ohlc_status ohlc_storage_open(ohlc_db* db, bool* fresh);
 void ohlc_storage_close(ohlc_db* db);
 ohlc_status ohlc_storage_table(ohlc_db* db, uint32_t table_id, bool create,

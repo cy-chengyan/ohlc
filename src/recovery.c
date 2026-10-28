@@ -816,10 +816,12 @@ static ohlc_status save_catalog(ohlc_db* db, const ohlc_root* root, uint64_t* of
 static ohlc_status load_catalog(ohlc_db* db, const ohlc_checkpoint_entry* checkpoint) {
     /* A failed newer catalog may have loaded partial dictionary tails. Each
      * fallback starts from its own table roots, including empty tables. */
-    for (size_t i = 0; i < db->file_capacity; i++) {
-        if (db->files[i] != NULL) {
-            db->files[i]->dictionary_disk_count = 0;
-            db->files[i]->dictionary_disk_offset = 0;
+    size_t capacity = ohlc_slot_capacity(&db->files);
+    for (size_t i = 0; i < capacity; i++) {
+        ohlc_table_files* files = ohlc_slot_get(&db->files, i);
+        if (files != NULL) {
+            files->dictionary_disk_count = 0;
+            files->dictionary_disk_offset = 0;
         }
     }
     uint8_t* payload = NULL;
@@ -1196,22 +1198,23 @@ ohlc_status ohlc_checkpoint_run(ohlc_db* db) {
     if (status != OHLC_OK) {
         goto cleanup;
     }
-    for (uint64_t id = 1; id <= db->file_capacity; id++) {
-        ohlc_table_files* files = db->files[id - 1];
+    size_t table_slots = ohlc_slot_capacity(&db->files);
+    for (size_t slot = 0; slot < table_slots; slot++) {
+        ohlc_table_files* files = ohlc_slot_get(&db->files, slot);
         if (files == NULL) {
             continue;
         }
         for (size_t v = 0; v < files->volume_count; v++) {
-            if (files->volumes[v] == NULL || !files->volumes[v]->dirty) {
+            ohlc_volume* volume = ohlc_slot_get(&files->volumes, v);
+            if (volume == NULL || !volume->dirty) {
                 continue;
             }
-            if (ohlc_sync(files->volumes[v]->data_fd) != OHLC_OK ||
-                ohlc_sync(files->volumes[v]->meta_fd) != OHLC_OK) {
+            if (ohlc_sync(volume->data_fd) != OHLC_OK || ohlc_sync(volume->meta_fd) != OHLC_OK) {
                 status = OHLC_IO;
                 db->failed = true;
                 goto cleanup;
             }
-            files->volumes[v]->dirty = false;
+            volume->dirty = false;
         }
         if (files->index_dirty && ohlc_sync(files->index_fd) != OHLC_OK) {
             status = OHLC_IO;
