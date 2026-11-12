@@ -1,0 +1,270 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#ifndef OHLC_OHLC_H
+#define OHLC_OHLC_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define OHLC_VERSION "0.1.0"
+#define OHLC_ABI_VERSION 4u
+#define OHLC_FORMAT_VERSION 6u
+#define OHLC_ROW_BYTES 64u
+#define OHLC_WRITE_BYTES 72u
+#define OHLC_RESULT_BYTES 68u
+#define OHLC_MAX_BATCH_ROWS 200000u
+#define OHLC_MAX_QUERY_TICKERS 65536u
+
+typedef enum {
+    OHLC_OK = 0,
+    OHLC_INVALID = 1,
+    OHLC_NOT_FOUND = 2,
+    OHLC_LIMIT = 3,
+    OHLC_BUSY = 4,
+    OHLC_IO = 5,
+    OHLC_CORRUPT = 6,
+    OHLC_UNSUPPORTED = 7,
+    OHLC_UNAUTHORIZED = 8,
+    OHLC_OUTCOME_UNKNOWN = 9,
+    OHLC_CANCELLED = 10,
+    OHLC_ALREADY_EXISTS = 11
+} ohlc_status;
+
+typedef enum {
+    OHLC_MINUTE = 1,
+    OHLC_DAY = 2,
+    OHLC_SECOND = 3,
+    OHLC_MONTH = 4,
+    OHLC_YEAR = 5
+} ohlc_period_unit;
+
+/* Parse a positive uint32 count followed by s, m, d, mo or y. Outputs are
+ * caller-owned and unchanged on INVALID. No allocation; thread-safe. */
+ohlc_status ohlc_period_parse(const char* text, ohlc_period_unit* unit, uint32_t* count);
+/* Borrow an immutable suffix, or NULL for an unknown unit. Thread-safe. */
+const char* ohlc_period_suffix(ohlc_period_unit unit);
+
+/* Field presence bits, in encoded field order. Zero is distinct from NULL. */
+#define OHLC_FIELD_OPEN (1u << 0)
+#define OHLC_FIELD_HIGH (1u << 1)
+#define OHLC_FIELD_LOW (1u << 2)
+#define OHLC_FIELD_CLOSE (1u << 3)
+#define OHLC_FIELD_VOLUME (1u << 4)
+#define OHLC_FIELD_AMOUNT (1u << 5)
+#define OHLC_FIELD_ADJUST_FACTOR (1u << 6)
+#define OHLC_FIELD_RESERVED (1u << 7)
+#define OHLC_FIELDS_MARKET 0x7fu
+#define OHLC_FIELDS_ALL 0xffu
+
+/* This native value is not the disk or wire layout. Always use the row codec. */
+typedef struct {
+    int64_t open;
+    int64_t high;
+    int64_t low;
+    int64_t close;
+    uint64_t volume;
+    uint64_t amount;
+    uint64_t adjust_factor;
+    /* Optional caller value; flags controls presence independently of its value. */
+    int32_t reserved;
+    /* Low eight bits indicate non-NULL fields. High 24 bits must remain zero.
+     * A zero-initialized row has eight NULLs and is still a present record. */
+    uint32_t flags;
+} ohlc_row;
+
+typedef struct {
+    const void* data;
+    size_t size;
+} ohlc_bytes;
+
+typedef struct {
+    const char* name;
+    ohlc_period_unit period_unit;
+    uint32_t period_count;
+    const char* timezone;
+    const char* description;
+} ohlc_table_definition;
+
+typedef struct {
+    uint32_t id;
+    uint64_t created_seq;
+    ohlc_period_unit period_unit;
+    uint32_t period_count;
+    char name[64];
+    char timezone[256];
+    char description[4097];
+} ohlc_table_info;
+
+typedef struct {
+    size_t cache_bytes;
+    size_t memory_limit;
+    uint64_t data_volume_bytes;
+    uint64_t wal_segment_bytes;
+    uint32_t max_tables;
+    uint32_t max_cursors;
+    uint32_t max_query_ms;
+    /* Default 0 reads in caller threads; 1..16 creates a shared read pool. */
+    uint32_t read_workers;
+    bool create_if_missing;
+} ohlc_options;
+
+typedef struct ohlc_db ohlc_db;
+typedef struct ohlc_cursor ohlc_cursor;
+
+typedef struct {
+    uint64_t commit_seq;
+    uint64_t checkpoint_seq;
+    /* Sum of dictionary entries in live tables; cross-table names count twice. */
+    uint64_t ticker_count;
+    uint32_t table_count;
+    uint64_t memory_bytes;
+    uint64_t disk_read_bytes;
+    uint64_t disk_read_calls;
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+    uint64_t wal_bytes;
+    uint64_t data_bytes;
+} ohlc_stats;
+
+/* Recovery may find a partly written commit group at the end of the newest WAL
+ * segment after a crash. Those bytes were never acknowledged; recovery durably saves
+ * them in the database directory, under the name in file, before truncating. */
+typedef struct {
+    /* Zero when this open discarded nothing; then the other fields are zero. */
+    uint64_t bytes;
+    /* First commit sequence that was not replayed. */
+    uint64_t first_seq;
+    /* Byte offset of the discarded tail within its segment. */
+    uint64_t offset;
+    uint32_t wal_id;
+    /* NUL-terminated name of the saved copy, relative to the database directory. */
+    char file[64];
+} ohlc_wal_discard;
+
+/* Process-wide constants; no allocation, initialization or ownership transfer.
+ * Bindings must check the ABI before passing native structures to the library. */
+const char* ohlc_version(void);
+uint32_t ohlc_abi_version(void);
+const char* ohlc_status_string(ohlc_status status);
+void ohlc_options_init(ohlc_options* options);
+/* Codec arguments must be non-NULL; native rows and encoded buffers must not
+ * overlap. Encoding zeros NULL payloads and the high 24 flag bits. Decoding exposes
+ * flags; a NULL field has a zero native value. Codecs do not validate market
+ * semantics. Raw encoded writes reject noncanonical NULLs or reserved bits. */
+void ohlc_row_encode(uint8_t output[OHLC_ROW_BYTES], const ohlc_row* row);
+void ohlc_row_decode(const uint8_t input[OHLC_ROW_BYTES], ohlc_row* row);
+void ohlc_write_encode(uint8_t output[OHLC_WRITE_BYTES], uint32_t ticker_code, uint32_t time_key,
+                       const ohlc_row* row);
+
+/* Public calls are thread safe except cursor operations, which are single-owner.
+ * The database owns its files exclusively. Database close requires all other
+ * calls to have finished and every cursor to have been closed.
+ * Mutations can return OHLC_BUSY before writing WAL when checkpoint headroom
+ * is unavailable. Embedded callers arrange checkpoints and close old cursors
+ * before retrying. A drained working set that cannot fit a request returns
+ * OHLC_LIMIT. Open may checkpoint verified WAL prefixes during recovery.
+ * Output handles are set to NULL on failure. No API terminates the process. */
+ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** output);
+ohlc_status ohlc_close(ohlc_db* db);
+void ohlc_uuid(ohlc_db* db, uint8_t output[16]);
+void ohlc_get_stats(ohlc_db* db, ohlc_stats* output);
+/* Copy the WAL tail discarded while this handle was opened. No allocation;
+ * thread-safe. The saved copy stays until an operator removes it. */
+void ohlc_wal_discard_info(ohlc_db* db, ohlc_wal_discard* output);
+
+ohlc_status ohlc_table_create(ohlc_db* db, const ohlc_table_definition* definition,
+                              ohlc_table_info* output);
+/* Permanently remove a table by its stable ID. Success means durable deletion;
+ * existing cursors keep their snapshots. Files are reclaimed after both
+ * checkpoints cover the deletion and outstanding cursors have closed.
+ * IDs are never reused. The output sequence is unchanged on failure. */
+ohlc_status ohlc_table_drop(ohlc_db* db, uint32_t table_id, uint64_t* commit_seq);
+ohlc_status ohlc_table_open(ohlc_db* db, const char* name, ohlc_table_info* output);
+ohlc_status ohlc_table_get(ohlc_db* db, uint32_t id, ohlc_table_info* output);
+ohlc_status ohlc_table_list(ohlc_db* db, uint32_t start_id, ohlc_table_info* output,
+                            size_t capacity, size_t* count, uint64_t* snapshot_seq);
+
+/* Ticker bytes are exact, may contain NUL, and have length 1..4096. */
+ohlc_status ohlc_register(ohlc_db* db, uint32_t table_id, ohlc_bytes ticker, uint32_t* code,
+                          uint64_t* seq);
+ohlc_status ohlc_resolve(ohlc_db* db, uint32_t table_id, ohlc_bytes ticker, uint32_t* code);
+/* Copy exact bytes into caller-owned storage; output borrows that 4096-byte buffer.
+ * Codes belong to (database UUID, table ID). Registration is optional: named
+ * writes create missing tickers in the same transaction as their rows. */
+ohlc_status ohlc_ticker(ohlc_db* db, uint32_t table_id, uint32_t code, uint8_t buffer[4096],
+                        ohlc_bytes* output);
+
+/* Rows use indexes into tickers, not persistent codes. Only referenced names are
+ * created. Names and rows are borrowed for this call. Duplicate logical keys
+ * reject the entire batch, including new names. All write guarantees below apply. */
+ohlc_status ohlc_write_named(ohlc_db* db, uint32_t table_id, const ohlc_bytes* tickers,
+                             size_t ticker_count, const void* rows, size_t count,
+                             uint64_t* commit_seq);
+
+/* Encoded rows are (ticker_code:u32, time_key:u32, row:64), little endian.
+ * The buffer is borrowed only for this call. Duplicate keys reject the entire
+ * batch. Success means durable WAL and atomic visibility. Never automatically
+ * retry OHLC_OUTCOME_UNKNOWN. Concurrent batches may share a WAL sync. A full
+ * admission queue or memory backpressure returns OHLC_BUSY before accepting
+ * the batch. An empty batch is invalid. The output sequence is unchanged on failure. */
+ohlc_status ohlc_write(ohlc_db* db, uint32_t table_id, const void* rows, size_t count,
+                       uint64_t* commit_seq);
+
+/* Query the closed range [start, end]. Both bounds must fit uint32; the wider
+ * end parameter allows out-of-range values to be rejected without truncation.
+ * Equal bounds query one time; reversed bounds return INVALID. Each cursor
+ * pins one database snapshot and must be closed even after a read error. */
+ohlc_status ohlc_series(ohlc_db* db, uint32_t table_id, uint32_t ticker_code, uint32_t start,
+                        uint64_t end, ohlc_cursor** output);
+ohlc_status ohlc_cross(ohlc_db* db, uint32_t table_id, uint32_t time_key, ohlc_cursor** output);
+/* Select exact ticker bytes in the same snapshot as the rows. Unknown names and
+ * missing rows are omitted; duplicates appear once, ordered by table-local code.
+ * An empty list returns no rows. Names (1..4096 bytes each) are borrowed only for
+ * this call; the cursor owns its selection. At most OHLC_MAX_QUERY_TICKERS names
+ * are accepted. Invalid inputs return INVALID, budget/count limits return LIMIT,
+ * and a missing table returns NOT_FOUND. Snapshot and thread rules above apply. */
+ohlc_status ohlc_cross_tickers(ohlc_db* db, uint32_t table_id, uint32_t time_key,
+                               const ohlc_bytes* tickers, size_t count, ohlc_cursor** output);
+uint64_t ohlc_cursor_sequence(const ohlc_cursor* cursor);
+/* Copies at most capacity result rows (key:u32, row:64) to caller storage.
+ * A successful zero count means complete. Results are ordered by time for
+ * series and by ticker code for cross. Capacity must be at least one.
+ * A failure sets count to zero and is sticky: later calls return the same
+ * status. The query deadline cancels only undelivered rows; the call that
+ * confirms completion succeeds even after the deadline. */
+ohlc_status ohlc_cursor_next(ohlc_cursor* cursor, void* output, size_t capacity, size_t* count);
+void ohlc_cursor_close(ohlc_cursor* cursor);
+
+/* Persists a captured committed snapshot using reserved memory. Normally writes
+ * continue during file I/O; under pressure new mutations return OHLC_BUSY until
+ * the checkpoint finishes. File I/O never holds the commit lock. Later commits
+ * remain WAL-protected and may need another checkpoint. Calls serialize with
+ * other checkpoints and do not change the commit sequence. Old cursors retain
+ * their snapshots and may delay memory reclamation until they are closed. */
+ohlc_status ohlc_checkpoint(ohlc_db* db);
+
+/* Day/month/year labels use YYYY-MM-DD or YYYYMMDD without date rounding.
+ * Second/minute strings add HH:MM:SS and an optional Z or +/-HH:MM offset,
+ * overriding the table timezone. Minute inputs require zero seconds.
+ * Keys use uint32 Unix seconds for SECOND, Unix minutes for MINUTE, and
+ * epoch days for DAY/MONTH/YEAR.
+ * Fractional seconds and leap seconds are rejected. No bar rounding occurs. */
+ohlc_status ohlc_time_parse(const ohlc_table_info* table, const char* input, uint32_t* time_key);
+/* Second/minute keys format as unambiguous UTC ISO timestamps; day/month/year
+ * keys as full calendar dates. The caller owns the output buffer. */
+ohlc_status ohlc_time_format(const ohlc_table_info* table, uint32_t time_key, char* output,
+                             size_t capacity);
+/* Human-facing time in the table timezone, including an explicit UTC offset.
+ * Day/month/year tables retain their calendar-date label. Machine output should also
+ * retain the original integer time key. */
+ohlc_status ohlc_time_format_local(const ohlc_table_info* table, uint32_t time_key, char* output,
+                                   size_t capacity);
+
+#ifdef __cplusplus
+}
+#endif
+#endif
