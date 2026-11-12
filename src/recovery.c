@@ -1173,6 +1173,8 @@ ohlc_status ohlc_checkpoint_run(ohlc_db* db) {
     if (db->checkpoint_generation == UINT64_MAX) {
         return OHLC_LIMIT;
     }
+    /* Offer this flush the dead extents that no reader can reach any more. */
+    ohlc_reclaim_release(db);
     pthread_mutex_lock(&db->writer);
     ohlc_root* source_root = ohlc_root_acquire(db);
     ohlc_status status = ohlc_memory_checkpoint_begin(db, source_root);
@@ -1265,6 +1267,8 @@ ohlc_status ohlc_checkpoint_run(ohlc_db* db) {
     status = checkpoint_write(db, root->seq, catalog, wal_id, wal_offset);
     if (status == OHLC_OK) {
         merge_checkpoint(db, source_root, root);
+        /* The previous durable root must stay alive for this comparison. */
+        ohlc_reclaim_checkpoint(db, db->checkpoint_root, root);
         pthread_mutex_lock(&db->writer);
         ohlc_root_release(db, db->checkpoint_root);
         db->checkpoint_root = root;
@@ -1289,6 +1293,7 @@ cleanup:
     /* Reclaim failures are reported separately and never fail the checkpoint. */
     if (status == OHLC_OK) {
         ohlc_storage_reclaim_tables(db);
+        ohlc_reclaim_release(db);
     }
     return status;
 }
@@ -2187,6 +2192,8 @@ ohlc_status ohlc_recover(ohlc_db* db, bool fresh) {
     }
     if (status == OHLC_OK) {
         db->checkpoint_root = ohlc_root_acquire(db);
+        /* Every volume that the selected checkpoint references is loaded. */
+        ohlc_reclaim_mark(db, db->checkpoint_root);
         db->checkpoint_at_ms = ohlc_monotonic_ms();
         status = ohlc_memory_admit(db, db->root);
         if (status == OHLC_OK) {

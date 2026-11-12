@@ -83,7 +83,8 @@ Concurrent batches can share one WAL synchronization. Readers pin immutable, ref
 roots. `recovery.c` handles WAL replay, two persistent CURRENT checkpoint slots, checkpoint
 publication, and reclamation. Table deletion preserves existing query snapshots; physical
 files are reclaimed only after both checkpoints cover deletion and relevant cursors close.
-Live-table extents are append-only; checkpointing is not compaction.
+`reclaim.c` tracks the extents that checkpoints supersede; later checkpoints reuse their blocks
+once neither CURRENT slot nor any live read root references them. Files never shrink.
 
 `ohlcd` exposes the engine through the framed binary protocol over Unix sockets, TCP, or TLS.
 `net.c` supplies transport/protocol helpers and `client.c` implements `libohlc_client`.

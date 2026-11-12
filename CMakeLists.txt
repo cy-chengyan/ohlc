@@ -53,6 +53,7 @@ add_library(ohlc SHARED
     src/dictionary.c
     src/engine.c
     src/recovery.c
+    src/reclaim.c
 )
 target_include_directories(ohlc PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

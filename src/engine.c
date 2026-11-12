@@ -81,6 +81,7 @@ static void database_destroy(ohlc_db* db) {
     }
     ohlc_root_release(db, db->root);
     ohlc_root_release(db, db->checkpoint_root);
+    ohlc_reclaim_discard(db);
     for (size_t i = 0; i < OHLC_CACHE_SHARDS; i++) {
         ohlc_free(&db->allocator, db->cache[i].entries);
         ohlc_free(&db->allocator, db->cache[i].blocks);
@@ -174,7 +175,11 @@ ohlc_status ohlc_open(const char* path, const ohlc_options* options, ohlc_db** o
     }
     db->io_initialized = true;
     db->path = ohlc_alloc(&db->allocator, strlen(path) + 1);
-    db->root = ohlc_root_new(db);
+    ohlc_root* initial = ohlc_root_new(db);
+    if (initial != NULL) {
+        /* Publishing registers the root among the live roots that reuse tracks. */
+        ohlc_root_publish(db, initial);
+    }
     if (db->path == NULL || db->root == NULL) {
         database_destroy(db);
         return OHLC_LIMIT;

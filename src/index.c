@@ -704,8 +704,54 @@ ohlc_root* ohlc_root_acquire(ohlc_db* db) {
     return root;
 }
 
+/* Called with root_mutex. A root keeps the epoch of its first publication;
+ * only the current root is ever published again. */
+static void root_track(ohlc_db* db, ohlc_root* root) {
+    if (root->publisher != NULL) {
+        return;
+    }
+    root->publisher = db;
+    root->epoch = ++db->root_epoch;
+    root->live_previous = db->live_last;
+    root->live_next = NULL;
+    if (db->live_last == NULL) {
+        db->live_first = root;
+    } else {
+        db->live_last->live_next = root;
+    }
+    db->live_last = root;
+}
+
+/* Called after the last reference is gone, so no thread can acquire the root. */
+static void root_untrack(ohlc_root* root) {
+    ohlc_db* db = root->publisher;
+    if (db == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&db->root_mutex);
+    if (root->live_previous == NULL) {
+        db->live_first = root->live_next;
+    } else {
+        root->live_previous->live_next = root->live_next;
+    }
+    if (root->live_next == NULL) {
+        db->live_last = root->live_previous;
+    } else {
+        root->live_next->live_previous = root->live_previous;
+    }
+    pthread_mutex_unlock(&db->root_mutex);
+}
+
+uint64_t ohlc_root_oldest_epoch(ohlc_db* db) {
+    pthread_mutex_lock(&db->root_mutex);
+    uint64_t epoch = db->live_first == NULL ? UINT64_MAX : db->live_first->epoch;
+    pthread_mutex_unlock(&db->root_mutex);
+    return epoch;
+}
+
 void ohlc_root_release_alloc(ohlc_root* root, ohlc_allocator* allocator) {
     if (root != NULL && last_reference(&root->refs)) {
+        root_untrack(root);
         for (size_t i = 0; i < root->page_count; i++) {
             table_page_release(allocator, root->pages[i]);
         }
@@ -722,6 +768,7 @@ void ohlc_root_publish(ohlc_db* db, ohlc_root* root) {
     pthread_mutex_lock(&db->root_mutex);
     ohlc_root* previous = db->root;
     db->root = root;
+    root_track(db, root);
     pthread_mutex_unlock(&db->root_mutex);
     ohlc_root_release(db, previous);
 }

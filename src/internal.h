@@ -213,6 +213,13 @@ typedef struct ohlc_root {
     size_t page_count;
     ohlc_table_page** pages;
     ohlc_memory_estimate memory;
+    /* Publication tracking, protected by the publishing database's root_mutex.
+     * A root that was never published has a NULL publisher and epoch 0. Live
+     * published roots form a list in increasing epoch order. */
+    ohlc_db* publisher;
+    uint64_t epoch;
+    struct ohlc_root* live_previous;
+    struct ohlc_root* live_next;
 } ohlc_root;
 
 static inline size_t ohlc_root_page_entries(const ohlc_root* root, size_t page) {
@@ -229,6 +236,30 @@ typedef struct ohlc_retired_table {
     uint64_t sequence;
     uint32_t id;
 } ohlc_retired_table;
+
+/* An extent that a durable checkpoint root stopped referencing. It belongs to
+ * exactly one (band, group) of one table. */
+typedef struct {
+    uint32_t table;
+    uint32_t band;
+    uint32_t group;
+    uint32_t volume;
+    uint64_t base;
+    uint32_t blocks;
+} ohlc_dead_extent;
+
+/* Extents superseded by one checkpoint, held until no checkpoint slot and no
+ * live read root can reference them. See design section 13.6. */
+typedef struct ohlc_reclaim_batch {
+    struct ohlc_reclaim_batch* next;
+    /* Every live published root must reach this epoch before the extents are
+     * reused. Zero until a later checkpoint is durable and the current root
+     * was checked. */
+    uint64_t barrier;
+    size_t count;
+    size_t capacity;
+    ohlc_dead_extent* extents;
+} ohlc_reclaim_batch;
 
 /* A grow-only table of pointers that readers use without a lock. Only the
  * storage owner (the checkpoint owner, or recovery) stores slots. Growth
@@ -261,13 +292,25 @@ typedef struct {
     int meta_fd;
     /* Next append offset; only the storage owner uses it. */
     uint64_t size;
-    /* Metadata entries below meta_count are immutable. The owner writes new
-     * entries, and any new pages, before publishing the count with release. */
+    /* Metadata entries below meta_count that a live root references are
+     * immutable. The owner writes new entries, and any new pages, before
+     * publishing the count with release. It rewrites the entries of reused
+     * blocks before it publishes the root that references them. */
     _Atomic size_t meta_count;
-    /* Pages of OHLC_META_PER_PAGE 32-byte entries, indexed by page number. */
+    /* Pages of OHLC_META_PER_PAGE 32-byte entries followed by one free bit
+     * per entry, indexed by page number. */
     ohlc_slots meta_pages;
     /* Only the checkpoint owner reads or writes persistence dirty flags. */
     bool dirty;
+    /* Reuse state of the free bits; only the storage owner uses it. Free
+     * blocks lie in [free_first, free_end). free_cursor is the next-fit
+     * position. A search for free_miss or more consecutive blocks has failed
+     * since the last release. */
+    size_t free_blocks;
+    size_t free_first;
+    size_t free_end;
+    size_t free_cursor;
+    size_t free_miss;
 } ohlc_volume;
 
 typedef struct {
@@ -441,6 +484,10 @@ struct ohlc_db {
     bool recovering;
     _Atomic bool memory_pressure;
     pthread_mutex_t root_mutex;
+    /* Protected by root_mutex: live published roots, oldest first. */
+    ohlc_root* live_first;
+    ohlc_root* live_last;
+    uint64_t root_epoch;
     /* Serializes storage mutations; queries and writers only read storage
      * objects, through ohlc_slots, and never take this lock. */
     pthread_mutex_t storage_mutex;
@@ -448,6 +495,11 @@ struct ohlc_db {
     /* ohlc_table_files pointers indexed by table ID - 1. */
     ohlc_slots files;
     ohlc_retired_table* retired_tables;
+    /* Owned by the checkpoint owner, or by single-threaded open and close.
+     * Reuse stays disabled after open until one checkpoint is durable, because
+     * the other checkpoint slot may still reference unmarked blocks. */
+    ohlc_reclaim_batch* reclaim_batches;
+    bool reuse_enabled;
     _Atomic bool reclaim_pending;
     /* Latest reclaim pass result; written by the checkpoint owner under
      * checkpoint_mutex (or during single-threaded open) and read under it. */
@@ -599,6 +651,8 @@ ohlc_root* ohlc_root_acquire(ohlc_db* db);
 void ohlc_root_release(ohlc_db* db, ohlc_root* root);
 void ohlc_root_release_alloc(ohlc_root* root, ohlc_allocator* allocator);
 void ohlc_root_publish(ohlc_db* db, ohlc_root* root);
+/* Epoch of the oldest published root that is still referenced. */
+uint64_t ohlc_root_oldest_epoch(ohlc_db* db);
 const ohlc_table* ohlc_root_table(const ohlc_root* root, uint32_t id);
 ohlc_status ohlc_root_edit_table(ohlc_db* db, ohlc_root* root, uint32_t id, ohlc_table** output);
 ohlc_status ohlc_root_edit_table_alloc(ohlc_root* root, uint32_t id, ohlc_table** output,
@@ -653,6 +707,24 @@ const uint8_t* ohlc_storage_presence(ohlc_db* db, uint32_t table, const ohlc_gro
                                      uint8_t tile);
 ohlc_status ohlc_storage_flush_group(ohlc_db* db, uint32_t table, uint32_t band, uint32_t group,
                                      const ohlc_group* entry, uint8_t* data, ohlc_group* output);
+/* Extent reuse; see design section 13.6. Only the storage owner calls these.
+ * Marks every block of every loaded volume as a reuse candidate. */
+void ohlc_storage_reuse_candidates(ohlc_db* db);
+/* Withdraws the blocks of a referenced on-disk extent from the candidates. */
+void ohlc_storage_reuse_keep(ohlc_db* db, uint32_t table, const ohlc_group* entry);
+/* Makes the blocks of a dead extent available to later flushes. The caller
+ * guarantees that no checkpoint slot and no live root references them. */
+void ohlc_storage_reuse_free(ohlc_db* db, const ohlc_dead_extent* extent);
+/* Marks the blocks that the recovered checkpoint root does not reference. */
+void ohlc_reclaim_mark(ohlc_db* db, const ohlc_root* root);
+/* Called by the checkpoint owner once saved is durable and merged, without
+ * writer. Records the extents that previous references and saved does not,
+ * and seals the batches of earlier checkpoints. */
+void ohlc_reclaim_checkpoint(ohlc_db* db, const ohlc_root* previous, const ohlc_root* saved);
+/* Releases the sealed batches that no live root predates. */
+void ohlc_reclaim_release(ohlc_db* db);
+/* Drops every pending batch at close. */
+void ohlc_reclaim_discard(ohlc_db* db);
 /* Conservative allocation bounds; SIZE_MAX denotes an unrepresentable request. */
 size_t ohlc_storage_checkpoint_bytes(ohlc_db* db, const ohlc_root* root);
 size_t ohlc_storage_table_bytes(ohlc_db* db, const ohlc_table* table);

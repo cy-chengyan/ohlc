@@ -13,6 +13,11 @@
 /* Small metadata pages bound the cost of a sparse newly created volume.
  * This changes only the in-memory directory, not the on-disk metadata layout. */
 #define OHLC_META_PER_PAGE 128u
+#define OHLC_META_ENTRY_BYTES (OHLC_META_PER_PAGE * 32u)
+/* Each in-memory page ends with one free bit per entry; see design section 13.6. */
+#define OHLC_META_PAGE_BYTES (OHLC_META_ENTRY_BYTES + OHLC_META_PER_PAGE / 8u)
+/* An extent holds at most 16 blocks, so no search for 17 blocks ever runs. */
+#define OHLC_FREE_MISS_NONE 17u
 
 static ohlc_allocator* storage_allocator(ohlc_db* db) {
     return db->checkpoint_source == NULL ? &db->allocator : &db->checkpoint_allocator;
@@ -98,8 +103,8 @@ size_t ohlc_storage_table_bytes(ohlc_db* db, const ohlc_table* table) {
     /* Appending B blocks needs at most floor(B / P) + V + 1 new metadata
      * pages: V new volumes and one arbitrarily filled existing volume. */
     size_t pages = ohlc_size_add(blocks / OHLC_META_PER_PAGE, ohlc_size_add(volumes, 1));
-    bytes = ohlc_size_add(
-        bytes, ohlc_size_multiply(pages, ohlc_allocation_bytes(OHLC_META_PER_PAGE * 32u)));
+    bytes = ohlc_size_add(bytes,
+                          ohlc_size_multiply(pages, ohlc_allocation_bytes(OHLC_META_PAGE_BYTES)));
     /* Across new volumes, power-of-two arrays retain fewer than four slots
      * per metadata page, plus their minimum arrays and allocation headers. */
     size_t per_page = 4u * sizeof(void*) + ohlc_allocation_bytes(sizeof(ohlc_slot_table));
@@ -450,7 +455,7 @@ static ohlc_status meta_reserve(ohlc_db* db, ohlc_volume* volume, size_t count) 
         if (ohlc_slot_get(&volume->meta_pages, i) != NULL) {
             continue;
         }
-        uint8_t* page = ohlc_alloc(storage_allocator(db), OHLC_META_PER_PAGE * 32u);
+        uint8_t* page = ohlc_alloc(storage_allocator(db), OHLC_META_PAGE_BYTES);
         if (page == NULL) {
             return OHLC_LIMIT;
         }
@@ -469,6 +474,126 @@ static uint8_t* meta_at(ohlc_volume* volume, uint64_t block) {
     return page + (block % OHLC_META_PER_PAGE) * 32u;
 }
 
+/* A set free bit marks a block that no checkpoint slot and no live root
+ * references. Pages are zeroed on allocation, so new blocks start as used.
+ * Only the storage owner reads or writes the bits. */
+static uint8_t* free_bits(ohlc_volume* volume, size_t page) {
+    uint8_t* memory = ohlc_slot_get(&volume->meta_pages, page);
+    return memory + OHLC_META_ENTRY_BYTES;
+}
+
+static bool block_is_free(ohlc_volume* volume, size_t block) {
+    const uint8_t* bits = free_bits(volume, block / OHLC_META_PER_PAGE);
+    size_t index = block % OHLC_META_PER_PAGE;
+    return (bits[index / 8u] & (1u << (index % 8u))) != 0;
+}
+
+static void block_set_free(ohlc_volume* volume, size_t block, bool is_free) {
+    uint8_t* bits = free_bits(volume, block / OHLC_META_PER_PAGE);
+    size_t index = block % OHLC_META_PER_PAGE;
+    uint8_t bit = (uint8_t)(1u << (index % 8u));
+    if (is_free) {
+        bits[index / 8u] |= bit;
+    } else {
+        bits[index / 8u] &= (uint8_t)~bit;
+    }
+}
+
+static bool page_has_free_block(ohlc_volume* volume, size_t page) {
+    const uint8_t* bits = free_bits(volume, page);
+    for (size_t i = 0; i < OHLC_META_PER_PAGE / 8u; i++) {
+        if (bits[i] != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Finds count consecutive free blocks within [start, end). */
+static bool free_run_search(ohlc_volume* volume, size_t start, size_t end, size_t count,
+                            size_t* first) {
+    size_t run = 0;
+    size_t block = start;
+    while (block < end) {
+        bool whole_page = block % OHLC_META_PER_PAGE == 0 && end - block >= OHLC_META_PER_PAGE;
+        if (whole_page && !page_has_free_block(volume, block / OHLC_META_PER_PAGE)) {
+            run = 0;
+            block += OHLC_META_PER_PAGE;
+            continue;
+        }
+        if (block_is_free(volume, block)) {
+            run++;
+            if (run == count) {
+                *first = block + 1 - count;
+                return true;
+            }
+        } else {
+            run = 0;
+        }
+        block++;
+    }
+    return false;
+}
+
+/* Takes count consecutive free blocks by next fit. A failed search is
+ * remembered until the next release, so that a fragmented volume is not
+ * scanned again for every extent of the same or a larger size. */
+static bool free_run_take(ohlc_volume* volume, size_t count, size_t* first) {
+    if (volume->free_blocks < count || count >= volume->free_miss) {
+        return false;
+    }
+    size_t cursor = volume->free_cursor;
+    if (cursor < volume->free_first || cursor > volume->free_end) {
+        cursor = volume->free_first;
+    }
+    bool found = free_run_search(volume, cursor, volume->free_end, count, first);
+    if (!found) {
+        /* A run that starts before the cursor may extend past it. */
+        size_t end = cursor + count - 1;
+        if (end > volume->free_end) {
+            end = volume->free_end;
+        }
+        found = free_run_search(volume, volume->free_first, end, count, first);
+    }
+    if (!found) {
+        volume->free_miss = count;
+        return false;
+    }
+    for (size_t i = 0; i < count; i++) {
+        block_set_free(volume, *first + i, false);
+    }
+    volume->free_blocks -= count;
+    volume->free_cursor = *first + count;
+    return true;
+}
+
+/* Marks [first, first + count) free. The caller ensures that the range lies
+ * below the metadata count. Blocks that are already free are counted once. */
+static void free_range_add(ohlc_volume* volume, size_t first, size_t count) {
+    if (count == 0) {
+        return;
+    }
+    if (volume->free_blocks == 0) {
+        volume->free_first = first;
+        volume->free_end = first + count;
+        volume->free_cursor = first;
+    } else {
+        if (first < volume->free_first) {
+            volume->free_first = first;
+        }
+        if (first + count > volume->free_end) {
+            volume->free_end = first + count;
+        }
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (!block_is_free(volume, first + i)) {
+            block_set_free(volume, first + i, true);
+            volume->free_blocks++;
+        }
+    }
+    volume->free_miss = OHLC_FREE_MISS_NONE;
+}
+
 static ohlc_status open_volume(ohlc_db* db, int directory, uint32_t table, uint32_t id, bool create,
                                ohlc_volume** output) {
     *output = NULL;
@@ -479,6 +604,7 @@ static ohlc_status open_volume(ohlc_db* db, int directory, uint32_t table, uint3
     volume->id = id;
     volume->data_fd = -1;
     volume->meta_fd = -1;
+    volume->free_miss = OHLC_FREE_MISS_NONE;
     atomic_init(&volume->meta_count, 0);
     atomic_init(&volume->meta_pages, NULL);
     char data_name[32];
@@ -1276,26 +1402,59 @@ static bool cache_acquire_locked(ohlc_cache* cache, size_t start, uint32_t table
     return hit;
 }
 
-static bool cache_acquire(ohlc_db* db, uint32_t table, uint32_t volume, ohlc_tile_view* view) {
-    uint64_t hash =
-        ((view->offset - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES) * UINT64_C(0x9e3779b185ebca87) ^
-        (uint64_t)table * UINT64_C(0xc2b2ae3d27d4eb4f) ^ volume;
+/* Selects the shard that holds a block and the first way of its set. Returns
+ * NULL when the cache is disabled. */
+static ohlc_cache* cache_locate(ohlc_db* db, uint32_t table, uint32_t volume, uint64_t offset,
+                                size_t* start) {
+    uint64_t hash = ((offset - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES) * UINT64_C(0x9e3779b185ebca87) ^
+                    (uint64_t)table * UINT64_C(0xc2b2ae3d27d4eb4f) ^ volume;
     hash = (hash ^ (hash >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
     hash = (hash ^ (hash >> 27)) * UINT64_C(0x94d049bb133111eb);
     hash ^= hash >> 31;
     ohlc_cache* cache = &db->cache[hash & (db->cache_shard_count - 1u)];
     if (cache->sets == 0) {
-        return false;
+        return NULL;
     }
     /* Scale the high hash bits by the set count instead of dividing. The low
      * bits select the shard. The result is below sets for every set count,
      * and uniform while a shard has at most 2^32 sets. */
     uint64_t set = ((hash >> 32) * (uint64_t)cache->sets) >> 32;
-    size_t start = (size_t)set * OHLC_CACHE_WAYS;
+    *start = (size_t)set * OHLC_CACHE_WAYS;
+    return cache;
+}
+
+static bool cache_acquire(ohlc_db* db, uint32_t table, uint32_t volume, ohlc_tile_view* view) {
+    size_t start = 0;
+    ohlc_cache* cache = cache_locate(db, table, volume, view->offset, &start);
+    if (cache == NULL) {
+        return false;
+    }
     if (cache_acquire_published(cache, start, table, volume, view)) {
         return true;
     }
     return cache_acquire_locked(cache, start, table, volume, view);
+}
+
+/* Drops every cached image of a block that is about to become reusable. The
+ * same group can later be rewritten at the same offset, which would otherwise
+ * match a stale entry. No reader references the block, so its entries hold no
+ * borrowed views and no load is in flight. */
+static void cache_forget(ohlc_db* db, uint32_t table, uint32_t volume, uint64_t offset) {
+    size_t start = 0;
+    ohlc_cache* cache = cache_locate(db, table, volume, offset, &start);
+    if (cache == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&cache->mutex);
+    for (size_t i = 0; i < OHLC_CACHE_WAYS; i++) {
+        ohlc_cache_entry* entry = &cache->entries[start + i];
+        if (atomic_load_explicit(&entry->offset, memory_order_relaxed) == offset &&
+            atomic_load_explicit(&entry->table, memory_order_relaxed) == table &&
+            atomic_load_explicit(&entry->volume, memory_order_relaxed) == volume) {
+            atomic_store_explicit(&entry->valid, false, memory_order_relaxed);
+        }
+    }
+    pthread_mutex_unlock(&cache->mutex);
 }
 
 static ohlc_status prepare_view(ohlc_db* db, uint32_t table, ohlc_tile_view* view, size_t* hits,
@@ -1499,8 +1658,20 @@ ohlc_status ohlc_storage_tile(ohlc_db* db, uint32_t table, uint32_t band, uint32
     return status;
 }
 
+/* Chooses the blocks of a new extent and returns its first block. Reusable
+ * blocks of any loaded volume come first; otherwise the extent is appended to
+ * the last volume, rolling over when it does not fit. */
 static ohlc_status allocate_extent(ohlc_db* db, ohlc_table_files* files, size_t blocks,
-                                   ohlc_volume** output) {
+                                   ohlc_volume** output, size_t* first) {
+    if (db->reuse_enabled) {
+        for (size_t i = 0; i < files->volume_count; i++) {
+            ohlc_volume* candidate = ohlc_slot_get(&files->volumes, i);
+            if (candidate != NULL && free_run_take(candidate, blocks, first)) {
+                *output = candidate;
+                return OHLC_OK;
+            }
+        }
+    }
     ohlc_volume* volume =
         files->volume_count == 0 ? NULL : ohlc_slot_get(&files->volumes, files->volume_count - 1);
     uint64_t bytes = (uint64_t)blocks * OHLC_BLOCK_BYTES;
@@ -1528,9 +1699,9 @@ static ohlc_status allocate_extent(ohlc_db* db, ohlc_table_files* files, size_t 
             return status;
         }
     }
+    *first = atomic_load_explicit(&volume->meta_count, memory_order_relaxed);
     pthread_mutex_lock(&db->storage_mutex);
-    ohlc_status status = meta_reserve(
-        db, volume, atomic_load_explicit(&volume->meta_count, memory_order_relaxed) + blocks);
+    ohlc_status status = meta_reserve(db, volume, *first + blocks);
     pthread_mutex_unlock(&db->storage_mutex);
     *output = volume;
     return status;
@@ -1570,28 +1741,36 @@ ohlc_status ohlc_storage_flush_group(ohlc_db* db, uint32_t table, uint32_t band,
         goto cleanup;
     }
     ohlc_volume* volume = NULL;
-    status = allocate_extent(db, files, blocks, &volume);
+    size_t first = 0;
+    status = allocate_extent(db, files, blocks, &volume, &first);
     if (status != OHLC_OK) {
         goto cleanup;
     }
-    uint64_t base = volume->size;
+    /* Data block N of a volume always pairs with metadata entry N. A reused
+     * extent lies below the published count; an appended one starts at it. */
     size_t count = atomic_load_explicit(&volume->meta_count, memory_order_relaxed);
+    bool appended = first == count;
+    uint64_t base = OHLC_PAGE_BYTES + (uint64_t)first * OHLC_BLOCK_BYTES;
     status = ohlc_write_full(volume->data_fd, data, blocks * OHLC_BLOCK_BYTES, base);
     if (status == OHLC_OK) {
         status = ohlc_write_full(volume->meta_fd, metadata, blocks * 32,
-                                 OHLC_PAGE_BYTES + (uint64_t)count * 32u);
+                                 OHLC_PAGE_BYTES + (uint64_t)first * 32u);
     }
     if (status != OHLC_OK) {
         db->failed = true;
         goto cleanup;
     }
+    /* No live root references reused entries until this checkpoint publishes
+     * its root, so rewriting them in place is invisible to readers. */
     pthread_mutex_lock(&db->storage_mutex);
     for (size_t i = 0; i < blocks; i++) {
-        memcpy(meta_at(volume, count + i), metadata + i * 32, 32);
+        memcpy(meta_at(volume, first + i), metadata + i * 32, 32);
     }
-    /* Readers that observe the new count also observe these entries. */
-    atomic_store_explicit(&volume->meta_count, count + blocks, memory_order_release);
-    volume->size += blocks * OHLC_BLOCK_BYTES;
+    if (appended) {
+        /* Readers that observe the new count also observe these entries. */
+        atomic_store_explicit(&volume->meta_count, count + blocks, memory_order_release);
+        volume->size += blocks * OHLC_BLOCK_BYTES;
+    }
     volume->dirty = true;
     pthread_mutex_unlock(&db->storage_mutex);
     atomic_fetch_add_explicit(&db->data_bytes, blocks * OHLC_BLOCK_BYTES, memory_order_relaxed);
@@ -1601,4 +1780,67 @@ ohlc_status ohlc_storage_flush_group(ohlc_db* db, uint32_t table, uint32_t band,
     output->volume = volume->id;
 cleanup:
     return status;
+}
+
+/* Returns the first block of an on-disk extent, or false when the extent does
+ * not lie within the loaded part of the volume. */
+static bool extent_blocks(ohlc_volume* volume, uint64_t base, size_t blocks, size_t* first) {
+    if (base < OHLC_PAGE_BYTES || (base - OHLC_PAGE_BYTES) % OHLC_BLOCK_BYTES != 0) {
+        return false;
+    }
+    uint64_t block = (base - OHLC_PAGE_BYTES) / OHLC_BLOCK_BYTES;
+    size_t count = atomic_load_explicit(&volume->meta_count, memory_order_relaxed);
+    if (block > count || blocks > count - block) {
+        return false;
+    }
+    *first = (size_t)block;
+    return true;
+}
+
+void ohlc_storage_reuse_candidates(ohlc_db* db) {
+    size_t table_slots = ohlc_slot_capacity(&db->files);
+    for (size_t slot = 0; slot < table_slots; slot++) {
+        ohlc_table_files* files = ohlc_slot_get(&db->files, slot);
+        if (files == NULL) {
+            continue;
+        }
+        for (size_t i = 0; i < files->volume_count; i++) {
+            ohlc_volume* volume = ohlc_slot_get(&files->volumes, i);
+            if (volume != NULL) {
+                size_t count = atomic_load_explicit(&volume->meta_count, memory_order_relaxed);
+                free_range_add(volume, 0, count);
+            }
+        }
+    }
+}
+
+void ohlc_storage_reuse_keep(ohlc_db* db, uint32_t table, const ohlc_group* entry) {
+    if (entry->flags != 0 || entry->mask == 0) {
+        return;
+    }
+    ohlc_volume* volume = find_volume(db, table, entry->volume);
+    size_t blocks = ohlc_popcount(entry->mask);
+    size_t first = 0;
+    if (volume == NULL || !extent_blocks(volume, entry->base, blocks, &first)) {
+        return;
+    }
+    for (size_t i = 0; i < blocks; i++) {
+        if (block_is_free(volume, first + i)) {
+            block_set_free(volume, first + i, false);
+            volume->free_blocks--;
+        }
+    }
+}
+
+void ohlc_storage_reuse_free(ohlc_db* db, const ohlc_dead_extent* extent) {
+    /* The files of a dropped table may already be closed. */
+    ohlc_volume* volume = find_volume(db, extent->table, extent->volume);
+    size_t first = 0;
+    if (volume == NULL || !extent_blocks(volume, extent->base, extent->blocks, &first)) {
+        return;
+    }
+    for (size_t i = 0; i < extent->blocks; i++) {
+        cache_forget(db, extent->table, extent->volume, extent->base + i * OHLC_BLOCK_BYTES);
+    }
+    free_range_add(volume, first, extent->blocks);
 }

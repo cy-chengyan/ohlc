@@ -355,8 +355,9 @@ maps, and location metadata are resident in memory. Missing records have explici
 
 This favors simple addressing and full-row reads, with a deliberate tradeoff: a partially populated
 tile still occupies a whole block. Scattered ticker lifetimes can reduce occupancy and increase
-cross-section read amplification, especially when new tickers keep arriving. Checkpoints also
-retain older physical images; version 0.1.0 does not compact them.
+cross-section read amplification, especially when new tickers keep arriving. Checkpoints rewrite
+changed extents; later checkpoints reuse the superseded blocks once no checkpoint or open query
+references them, but files never shrink.
 
 See the [storage diagram](docs/images/ohlc-storage-index-overview.svg),
 [addressing diagram](docs/images/ohlc-block-addressing.svg), and
