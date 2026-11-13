@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define OHLC_VERSION "0.1.0"
+#define OHLC_VERSION "0.1.2"
 #define OHLC_ABI_VERSION 4u
 #define OHLC_FORMAT_VERSION 6u
 #define OHLC_ROW_BYTES 64u

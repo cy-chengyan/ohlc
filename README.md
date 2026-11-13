@@ -11,14 +11,14 @@ ohlc uses **two-dimensional tiles, computed addressing, fixed-length rows, and n
 It runs as an embedded library or as a standalone server, with C, Python, and Java interfaces
 and an interactive command shell.
 
-**Current version: `0.1.0` · Deployment target: Linux · License: Apache-2.0**
+**Current version: `0.1.2` · Deployment target: Linux · License: Apache-2.0**
 
 [Why integer values](#why-integer-values) · [Quick start](#quick-start) ·
 [Client libraries](#client-libraries) ·
 [RHEL packages](#rhel-packages) · [Validation](#validation-and-performance) ·
 [Design](docs/design.md)
 
-First release: **`0.1.0`**, with nullable 64-byte rows, **disk format 6 / protocol 6 / C ABI 4**.
+Version **`0.1.2`** retains nullable 64-byte rows, **disk format 6 / protocol 6 / C ABI 4**.
 Use matching server, library, and language-binding versions.
 
 ## What it provides
@@ -314,9 +314,9 @@ in the [design and operations document](docs/design.md).
 
 ## RHEL packages
 
-The [0.1.0 release](https://github.com/cy-chengyan/ohlc/releases/tag/0.1.0) provides x86-64 RPMs
+The [0.1.2 release](https://github.com/cy-chengyan/ohlc/releases/tag/0.1.2) provides x86-64 RPMs
 for RHEL 8 and 9, source RPMs, and debug packages. Download and extract the matching
-`ohlc-0.1.0-1.el8.x86_64.tar.gz` or `ohlc-0.1.0-1.el9.x86_64.tar.gz` bundle; each contains
+`ohlc-0.1.2-1.el8.x86_64.tar.gz` or `ohlc-0.1.2-1.el9.x86_64.tar.gz` bundle; each contains
 the eight functional packages and a `SHA256SUMS` manifest. The
 [RPM specification](packaging/ohlc.spec) is included for source builds.
 
@@ -380,11 +380,21 @@ dataset, and process crash recovery. The
 [RPM acceptance report](docs/benchmarks/2026-11-12-rpm-acceptance.md) records package build,
 installation, service, and language-runtime checks for both EL targets.
 
+The [extent reuse report, November 12, 2026](docs/benchmarks/2026-11-12-extent-reuse.md)
+records Linux snapshot, cache, reopen, process-crash and sanitizer checks, plus a deterministic
+mixed workload comparison with `main`. This is a small-scale space measurement; long-running
+production workloads and power-loss durability remain separate validation work.
+The [C-scale four-system rerun](docs/benchmarks/2026-11-12-home01-c-extent-reuse.md)
+records measured results for this extent-reuse branch and the same fixed competitor versions,
+including unstable groups and the InfluxDB import and memory-limit failures.
+The [four-hour mixed workload report](docs/benchmarks/2026-11-12-home01-mixed4h-extent-reuse.md)
+tracks sustained appends, historical replacements, concurrent reads, and the final full-data audit.
+
 ## Release scope
 
-- **Linux x86-64:** primary target; the Release build passes all 13 CTest checks on RHEL 8
+- **Linux x86-64:** primary target; the 0.1.0 Release build passed all 13 CTest checks on RHEL 8
   with GCC 8.5, Python 3.12, and JDK 21. Full platform acceptance remains separate.
-- **RHEL 8/9 packages:** x86-64 RPMs pass all 13 build checks and installed-package acceptance
+- **RHEL 8/9 packages:** the 0.1.0 x86-64 RPMs passed all 13 build checks and installed-package acceptance
   in isolated EL8/EL9 user spaces on the home01 RHEL 9 kernel. This does not establish coverage
   on an independent RHEL 8 kernel.
 - **Java:** the JAR targets Java 17 bytecode. Installed JAR network, TLS, and JNI checks pass

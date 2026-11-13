@@ -9,7 +9,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 __all__ = ["Connection", "Table", "Chunk", "Error", "OutcomeUnknown",
            "Database", "DatabaseOptions", "EmbeddedTable", "EmbeddedQuery"]

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-%global upstream_version 0.1.0
+%global upstream_version 0.1.2
 %global python_version 3.9
 %global python /usr/bin/python3.9
 %global python_sitelib /usr/lib/python3.9/site-packages
 
 Name:           ohlc
-Version:        0.1.0
+Version:        0.1.2
 Release:        1%{?dist}
 Summary:        Fixed-row OHLC storage engine and service
 License:        Apache-2.0
@@ -193,6 +193,11 @@ getent passwd ohlc >/dev/null || \
 %{_libdir}/libohlc_jni.so
 
 %changelog
+* Fri Nov 13 2026 chengyan <chengyan.cy@gmail.com> - 0.1.2-1
+- Reuse superseded live-table extents after checkpoint and reader protection.
+- Add extent reuse, crash recovery and benchmark completion checks.
+- Preserve disk/protocol 6 and C ABI 4.
+
 * Thu Nov 12 2026 chengyan <chengyan.cy@gmail.com> - 0.1.0-1
 - First-release baseline for RHEL 8 and 9 with C, Python and Java interfaces.
 - Nullable 64-byte rows, 8 KiB tiles, disk/protocol 6 and C ABI 4.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ohlc VERSION 0.1.0 LANGUAGES C)
+project(ohlc VERSION 0.1.2 LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckCCompilerFlag)
@@ -271,9 +271,20 @@ if(OHLC_BUILD_TESTS)
     target_link_libraries(ohlc_memory_test PRIVATE ohlc Threads::Threads)
     ohlc_diagnostics(ohlc_memory_test)
     add_test(NAME memory COMMAND ohlc_memory_test)
+    add_executable(ohlc_extent_reuse_test tests/extent_reuse_test.c)
+    target_compile_definitions(ohlc_extent_reuse_test PRIVATE _POSIX_C_SOURCE=200809L)
+    target_include_directories(ohlc_extent_reuse_test PRIVATE src)
+    target_link_libraries(ohlc_extent_reuse_test PRIVATE ohlc Threads::Threads)
+    ohlc_diagnostics(ohlc_extent_reuse_test)
+    add_test(NAME extent_reuse COMMAND ohlc_extent_reuse_test)
+    set_tests_properties(extent_reuse PROPERTIES TIMEOUT 120)
     set_tests_properties(memory PROPERTIES TIMEOUT 90)
     set_tests_properties(core concurrency pipeline PROPERTIES TIMEOUT 60)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT OHLC_SANITIZE AND NOT OHLC_THREAD_SANITIZE)
+        add_test(NAME extent_reuse_crash COMMAND ${CMAKE_COMMAND} -E env
+            "LD_PRELOAD=$<TARGET_FILE:ohlc_fault_inject>" OHLC_TEST_EXTENT_CRASH=1
+            $<TARGET_FILE:ohlc_extent_reuse_test>)
+        set_tests_properties(extent_reuse_crash PROPERTIES TIMEOUT 120)
         add_test(NAME commit_sync_failure COMMAND ${CMAKE_COMMAND} -E env
             "LD_PRELOAD=$<TARGET_FILE:ohlc_fault_inject>" OHLC_TEST_SYNC_FAILURES=1
             $<TARGET_FILE:ohlc_pipeline_test>)
@@ -290,6 +301,9 @@ if(OHLC_BUILD_TESTS)
     if(NOT OHLC_SANITIZE AND NOT OHLC_THREAD_SANITIZE)
         find_package(Python3 3.9 QUIET COMPONENTS Interpreter)
         if(Python3_FOUND)
+            add_test(NAME benchmark_influx COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_influx_test.py")
+            set_tests_properties(benchmark_influx PROPERTIES TIMEOUT 10)
             set(OHLC_EMBEDDED_JAVA_ARGS)
             if(TARGET ohlc_jni)
                 list(APPEND OHLC_EMBEDDED_JAVA_ARGS $<TARGET_FILE:ohlc_jni>

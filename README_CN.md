@@ -10,13 +10,13 @@ ohlc 数据库只用于保存 OHLC 行情数据，它专注于两类查询：
 ohlc 采用 **二维分块、计算寻址、定长行存、不压缩** 的存储方案。
 既可以作为嵌入式库使用，也可以作为独立服务运行，提供 C、Python、Java 接口和交互式命令行客户端。
 
-**当前版本：`0.1.0` · 目标部署环境：Linux · 许可证：Apache-2.0**
+**当前版本：`0.1.2` · 目标部署环境：Linux · 许可证：Apache-2.0**
 
 [整数设计](#为什么接口和存储都使用整数) · [快速上手](#快速上手) · [客户端库](#客户端库) ·
 [RHEL 安装包](#rhel-安装包) · [验证与性能](#验证与性能) ·
 [设计文档](docs/design.md)
 
-首版 **`0.1.0`** 使用可空 64 B 行，**磁盘格式 6 / 协议 6 / C ABI 4**。
+**`0.1.2`** 继续使用可空 64 B 行，**磁盘格式 6 / 协议 6 / C ABI 4**。
 服务端、运行库和语言封装须使用配套版本。
 
 ## 功能概览
@@ -288,9 +288,9 @@ Unix 套接字默认只允许其所有者访问。TCP 的令牌认证和 TLS 均
 
 ## RHEL 安装包
 
-[0.1.0 正式版](https://github.com/cy-chengyan/ohlc/releases/tag/0.1.0)提供 RHEL 8、9 的 x86-64 RPM、
-源码 RPM 和调试包。下载并解压对应的 `ohlc-0.1.0-1.el8.x86_64.tar.gz` 或
-`ohlc-0.1.0-1.el9.x86_64.tar.gz`，其中包含八个功能包和 `SHA256SUMS` 校验清单。
+[0.1.2 正式版](https://github.com/cy-chengyan/ohlc/releases/tag/0.1.2)提供 RHEL 8、9 的 x86-64 RPM、
+源码 RPM 和调试包。下载并解压对应的 `ohlc-0.1.2-1.el8.x86_64.tar.gz` 或
+`ohlc-0.1.2-1.el9.x86_64.tar.gz`，其中包含八个功能包和 `SHA256SUMS` 校验清单。
 源码构建可使用仓库中的 [RPM 打包配置](packaging/ohlc.spec)。
 
 | 软件包 | 内容 |
@@ -344,10 +344,18 @@ RPM 默认使用配置文件 `/etc/ohlc/ohlcd.conf`、数据库目录 `/var/lib/
 空间增长、冷读、48.384 亿行数据集与进程故障恢复测试。
 [RPM 验收报告](docs/benchmarks/2026-11-12-rpm-acceptance.md)记录两套 EL 环境的软件包构建、安装、服务及语言运行时检查。
 
+[2026-11-12 extent 复用专项报告](docs/benchmarks/2026-11-12-extent-reuse.md)记录 Linux 下的快照、缓存、
+重开、进程崩溃和 Sanitizer 检查，以及与 `main` 的确定性混合负载对照。
+本轮属于缩小规模的空间测量，长期生产负载与真实断电持久性仍需独立验证。
+[C 规模四库重测报告](docs/benchmarks/2026-11-12-home01-c-extent-reuse.md)
+记录 extent 复用分支与相同固定版本竞品的实测结果，包括不稳定组及 InfluxDB 导入和内存上限失败。
+[4 小时混合负载报告](docs/benchmarks/2026-11-12-home01-mixed4h-extent-reuse.md)
+跟踪持续追加、历史替换、并发读取及结束后的全量校验。
+
 ## 正式版范围
 
-- **Linux x86-64：** 主要目标平台；RHEL 8 / GCC 8.5 / Python 3.12 / JDK 21 下的 Release 构建通过全部 13 项 CTest，完整平台验收另行进行。
-- **RHEL 8/9 软件包：** x86-64 RPM 在 home01 的 RHEL 9 内核上，使用隔离的 EL8/EL9 用户空间，
+- **Linux x86-64：** 主要目标平台；0.1.0 在 RHEL 8 / GCC 8.5 / Python 3.12 / JDK 21 下的 Release 构建通过全部 13 项 CTest，完整平台验收另行进行。
+- **RHEL 8/9 软件包：** 0.1.0 的 x86-64 RPM 在 home01 的 RHEL 9 内核上，使用隔离的 EL8/EL9 用户空间，
   通过全部 13 项构建检查和安装包验收；该结果不代表独立 RHEL 8 内核验收。
 - **Java：** JAR 编译为 Java 17 字节码；两套 RPM 环境均通过 JDK 17、21 的网络、TLS 和 JNI 检查。
 - **Linux ARM64 与 macOS：** 提供源码构建入口，运行验收待完成。

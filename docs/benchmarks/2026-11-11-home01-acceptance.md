@@ -210,6 +210,13 @@ home01：`/ssd02/ohlc-acceptance-20261111/`。测试工具为 `tools/benchmark_a
 各轮 `results/<轮次>/tools/` 保存实际使用的源文件，`environment.json` 保存二进制和工具指纹，
 `*-launch.json` 保存具体命令与隔离设置。基线数据库和 `/hd01/quotation` 原始数据均保留。
 本地阶段证据存放于 `run/acceptance-home01-20261111/`。
+2026-11-12 按用户要求删除已完成的 24 小时混合测试库
+`data/post01/mixed/`（1,020,610,000 行）。删除前文件分配量为 215.442 GiB，
+文件系统可用空间实际增加约 200.871 GiB；该库最初使用 `cp --reflink=auto` 克隆，
+文件分配量包含可能共享的 extent，不能直接当作实际释放量。
+原始行情、基线库、测量日志和证据归档保留；本次删除记录位于
+`results/post01/mixed-deletion-20261112.json`，本地副本为
+`run/acceptance-home01-20261111/mixed-deletion-20261112.json`。
 编排状态为远端 `results/pipeline-state.json`；结束时生成 `results/finalization.json`、
 `results/final-summary.json`、`results/evidence-sha256.json` 和 `evidence.tar.gz`。
 本地 `benchmark_acceptance_watch.py` 仅更新本文标记范围内的测量汇总，并在结束后取回、核验完整证据包；

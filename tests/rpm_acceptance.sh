@@ -116,8 +116,13 @@ java_home=/usr/lib/jvm/java-17-openjdk
 "$java_home/bin/javac" --release 17 -Xlint:all -Werror -cp /usr/share/ohlc/ohlc-client.jar -d "$work/consumer" "$source/examples/Embedded.java"
 "$java_home/bin/java" -Xcheck:jni -Djava.library.path=/usr/lib64 -cp "$work/consumer:/usr/share/ohlc/ohlc-client.jar" Embedded "$work/java-db"
 python3.9 - <<'PY'
+import subprocess
 from ohlc import Connection, __version__
-assert __version__ == "0.1.0"
+
+expected = subprocess.check_output(
+    ["rpm", "-q", "--qf", "%{VERSION}", "ohlc-libs"], text=True).strip()
+assert __version__ == expected
+assert subprocess.check_output(["ohlc", "--version"], text=True).strip() == f"ohlc {expected}"
 with Connection(socket="/run/ohlc/ohlcd.sock") as connection:
     assert connection.stats()["table_count"] == 1
     connection.checkpoint()

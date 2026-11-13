@@ -45,10 +45,12 @@ class Controller:
         for path in (args.root / "source/tools").glob("benchmark_*.py"):
             shutil.copy2(path, sources / path.name)
             hashes[path.name] = sha256(path)
+        binary_paths = [args.previous / "build" / name for name in
+                        ("ohlcd", "ohlc-admin", "libohlc.so.0", "libohlc_client.so.0",
+                         "fault_inject.so")]
         atomic_json(self.output / "environment.json", {
             "product_provenance": json.loads((args.previous / "source/ohlc-benchmark-provenance.json").read_text()),
-            "binaries": {name: sha256(args.previous / "build" / name) for name in
-                         ("ohlcd", "ohlc-admin", "libohlc.so.0.1.0", "libohlc_client.so.0.1.0", "fault_inject.so")},
+            "binaries": {path.resolve().name: sha256(path) for path in binary_paths},
             "tools": hashes, "uid": self.uid, "server_cpus": "0-15", "client_cpus": "24-39",
             "arguments": {key: str(value) if isinstance(value, Path) else value
                           for key, value in vars(args).items()},

@@ -24,6 +24,7 @@ import time
 import threading
 import urllib.parse
 
+from benchmark_influx import settled_state
 from benchmark_metrics import (LATENCY_CAP_SECONDS, THROUGHPUT_ROUND_SECONDS,
                                THROUGHPUT_WARMUP_SECONDS, proc_snapshot, process_delta,
                                sha256, summarize, disk_usage, cgroup_swap_snapshot)
@@ -244,10 +245,11 @@ class ClickHouse(HttpDriver):
 
 
 class InfluxDB(HttpDriver):
-    def __init__(self, token_path, setup=False):
+    def __init__(self, token_path, setup=False, data=None):
         super().__init__(18086)
         self.sort_required = {"S": True, "X": True}
         self.token_path = token_path
+        self.data = data
         if setup:
             self.token = secrets.token_urlsafe(32)
             payload = json.dumps({"username": "bench", "password": secrets.token_urlsafe(32),
@@ -284,29 +286,21 @@ class InfluxDB(HttpDriver):
         self.execute_call(prepared)
 
     def settle(self):
-        required = ("storage_cache_inuse_bytes", "storage_compactions_active",
-                    "storage_compactions_queued")
         deadline = time.monotonic() + 3600
         quiet = None
+        previous = None
         while time.monotonic() < deadline:
             raw = self.call("/metrics", method="GET").decode()
-            values = {name: [] for name in required}
-            for line in raw.splitlines():
-                if line.startswith("#") or not line.strip():
-                    continue
-                name = line.split("{", 1)[0].split()[0]
-                if name in values:
-                    values[name].append(float(line.rsplit(None, 1)[1]))
-            # In 2.7.12 an active level is exported only after its first compaction.
-            # Cache and queued gauges must exist; absent active levels mean no work began.
-            observed = values["storage_cache_inuse_bytes"] and values["storage_compactions_queued"]
-            if observed and all(sum(items) == 0 for items in values.values()):
-                quiet = quiet or time.monotonic()
+            state = settled_state(self.data, raw)
+            if state is not None:
+                if state != previous:
+                    quiet = time.monotonic()
                 # Cover the configured 60-second full-compaction cold interval and scheduler.
                 if time.monotonic() - quiet >= 65:
-                    return {"settled_metrics": values, "raw": raw}
+                    return {**state, "raw": raw}
             else:
                 quiet = None
+            previous = state
             time.sleep(1)
         raise TimeoutError("InfluxDB cache snapshot/compaction did not finish")
 
@@ -482,7 +476,7 @@ def make_driver(args, keys, setup=False):
     if args.system == "clickhouse":
         return ClickHouse()
     if args.system == "influxdb":
-        driver = InfluxDB(args.token, setup)
+        driver = InfluxDB(args.token, setup, args.data)
         driver.sort_required = getattr(args, "influx_sort_required", driver.sort_required)
         return driver
     return Aerospike(args.stocks, keys)

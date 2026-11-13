@@ -41,7 +41,7 @@ import javax.net.ssl.SSLSocket;
  * uint64 values preserve every bit in a long, including negative signed values.
  */
 public final class Ohlc implements AutoCloseable {
-    public static final String VERSION = "0.1.0";
+    public static final String VERSION = "0.1.2";
     public static final int ROW_BYTES = 64;
     public static final int WRITE_BYTES = 72;
     public static final int RESULT_BYTES = 68;
