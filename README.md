@@ -32,6 +32,7 @@ Use matching server, library, and language-binding versions.
 - Unix sockets, TCP, authenticated TLS, configuration files, and systemd integration.
 - A shell with `help`, `series`, `cross`, CSV/TSV import, export, and script execution.
 - Statistics, explicit checkpoints, and offline check, backup, and restore tools.
+- Online reuse of superseded extents after checkpoint and reader protection; files do not shrink.
 
 ohlc is specialized for full-bar reads. It does not implement SQL, arbitrary schemas, automatic
 aggregation, or a trading calendar. The application supplies the bars, their timestamps, units,
@@ -377,8 +378,9 @@ along with failures and comparability limits. This run does not replace formal S
 The [mixed workload, cold-read, and recovery report](docs/benchmarks/2026-11-11-home01-acceptance.md)
 records the completed 24-hour mixed workload, storage growth, cold reads, 4.8384-billion-row
 dataset, and process crash recovery. The
-[RPM acceptance report](docs/benchmarks/2026-11-12-rpm-acceptance.md) records package build,
-installation, service, and language-runtime checks for both EL targets.
+[0.1.2 RPM acceptance report](docs/benchmarks/2026-11-13-rpm-0.1.2-acceptance.md) records package
+build, installation, upgrade from 0.1.0, service, and language-runtime checks for both EL targets.
+The [0.1.0 package report](docs/benchmarks/2026-11-12-rpm-acceptance.md) preserves the initial release evidence.
 
 The [extent reuse report, November 12, 2026](docs/benchmarks/2026-11-12-extent-reuse.md)
 records Linux snapshot, cache, reopen, process-crash and sanitizer checks, plus a deterministic
@@ -392,9 +394,10 @@ tracks sustained appends, historical replacements, concurrent reads, and the fin
 
 ## Release scope
 
-- **Linux x86-64:** primary target; the 0.1.0 Release build passed all 13 CTest checks on RHEL 8
+- **Linux x86-64:** primary target; the 0.1.2 Release build passed all 16 CTest checks on RHEL 8
   with GCC 8.5, Python 3.12, and JDK 21. Full platform acceptance remains separate.
-- **RHEL 8/9 packages:** the 0.1.0 x86-64 RPMs passed all 13 build checks and installed-package acceptance
+- **RHEL 8/9 packages:** the 0.1.2 x86-64 RPMs passed all 16 build checks and installed-package acceptance,
+  including upgrade from 0.1.0,
   in isolated EL8/EL9 user spaces on the home01 RHEL 9 kernel. This does not establish coverage
   on an independent RHEL 8 kernel.
 - **Java:** the JAR targets Java 17 bytecode. Installed JAR network, TLS, and JNI checks pass

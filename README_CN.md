@@ -28,6 +28,7 @@ ohlc 采用 **二维分块、计算寻址、定长行存、不压缩** 的存储
 - 支持 Unix 套接字、TCP、TLS 与身份验证、配置文件和 systemd 集成。
 - 命令行客户端支持 `help`、`series`、`cross`、CSV/TSV 导入、导出和脚本执行。
 - 提供统计信息、显式检查点，以及离线检查、备份和恢复工具。
+- 被替换的 extent 在满足检查点和读快照保护条件后在线复用，文件不会自动缩短。
 
 ohlc 面向完整行情记录的读取，不提供 SQL、任意表结构、自动聚合或交易日历。
 行情记录及其时间戳、单位、缩放比例和复权因子均由应用提供。
@@ -342,7 +343,9 @@ RPM 默认使用配置文件 `/etc/ohlc/ohlcd.conf`、数据库目录 `/var/lib/
 
 [混合读写、冷读与恢复报告](docs/benchmarks/2026-11-11-home01-acceptance.md)记录已完成的 24 小时混合读写、
 空间增长、冷读、48.384 亿行数据集与进程故障恢复测试。
-[RPM 验收报告](docs/benchmarks/2026-11-12-rpm-acceptance.md)记录两套 EL 环境的软件包构建、安装、服务及语言运行时检查。
+[0.1.2 RPM 验收报告](docs/benchmarks/2026-11-13-rpm-0.1.2-acceptance.md)记录两套 EL 环境的软件包构建、
+安装、从 0.1.0 升级、服务及语言运行时检查。
+[0.1.0 软件包报告](docs/benchmarks/2026-11-12-rpm-acceptance.md)保留首版证据。
 
 [2026-11-12 extent 复用专项报告](docs/benchmarks/2026-11-12-extent-reuse.md)记录 Linux 下的快照、缓存、
 重开、进程崩溃和 Sanitizer 检查，以及与 `main` 的确定性混合负载对照。
@@ -354,9 +357,9 @@ RPM 默认使用配置文件 `/etc/ohlc/ohlcd.conf`、数据库目录 `/var/lib/
 
 ## 正式版范围
 
-- **Linux x86-64：** 主要目标平台；0.1.0 在 RHEL 8 / GCC 8.5 / Python 3.12 / JDK 21 下的 Release 构建通过全部 13 项 CTest，完整平台验收另行进行。
-- **RHEL 8/9 软件包：** 0.1.0 的 x86-64 RPM 在 home01 的 RHEL 9 内核上，使用隔离的 EL8/EL9 用户空间，
-  通过全部 13 项构建检查和安装包验收；该结果不代表独立 RHEL 8 内核验收。
+- **Linux x86-64：** 主要目标平台；0.1.2 在 RHEL 8 / GCC 8.5 / Python 3.12 / JDK 21 下的 Release 构建通过全部 16 项 CTest，完整平台验收另行进行。
+- **RHEL 8/9 软件包：** 0.1.2 的 x86-64 RPM 在 home01 的 RHEL 9 内核上，使用隔离的 EL8/EL9 用户空间，
+  通过全部 16 项构建检查、安装及 0.1.0 升级验收；该结果不代表独立 RHEL 8 内核验收。
 - **Java：** JAR 编译为 Java 17 字节码；两套 RPM 环境均通过 JDK 17、21 的网络、TLS 和 JNI 检查。
 - **Linux ARM64 与 macOS：** 提供源码构建入口，运行验收待完成。
 
